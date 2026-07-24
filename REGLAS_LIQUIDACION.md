@@ -270,6 +270,18 @@ if tipo == 181:  return PERDIDA if ambos else GANADA
 
 Nunca produce NULA. `0:0` → `T180` PERDIDA, `T181` GANADA.
 
+### 5.7 Qué tipos requieren parámetro
+
+Está implícito en la descripción de cada mercado de arriba; se deja explícito
+acá porque un `parametro` ausente o presente donde no corresponde es un bug
+del llamador, no un caso de negocio (§9 — `resolver()` lo rechaza con
+`ValueError`).
+
+| Requiere parámetro | Tipos |
+|---|---|
+| Sí | 7, 8, 9, 10, 11, 12, 13, 14 |
+| No | 1, 2, 3, 4, 5, 6, 180, 181 |
+
 ---
 
 ## 6. Liquidación de combinadas

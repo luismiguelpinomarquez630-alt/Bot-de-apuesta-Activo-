@@ -143,3 +143,13 @@ def test_resolver_tipo_no_soportado_levanta_value_error():
 def test_resolver_parametro_invalido_levanta_value_error():
     with pytest.raises(ValueError):
         resolver(9, Decimal("2.75"), _m(1, 1))
+
+
+def test_resolver_tipo_con_parametro_sin_parametro_levanta_value_error():
+    with pytest.raises(ValueError):
+        resolver(9, None, _m(1, 1))
+
+
+def test_resolver_tipo_sin_parametro_con_parametro_levanta_value_error():
+    with pytest.raises(ValueError):
+        resolver(1, Decimal("2.5"), _m(1, 1))

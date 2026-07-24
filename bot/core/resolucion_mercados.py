@@ -28,9 +28,9 @@ class Marcador:
     periodos_raw: str
 
 
-_TIPOS_SOPORTADOS = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 180, 181}
-)
+_TIPOS_CON_PARAMETRO = frozenset({7, 8, 9, 10, 11, 12, 13, 14})
+_TIPOS_SIN_PARAMETRO = frozenset({1, 2, 3, 4, 5, 6, 180, 181})
+_TIPOS_SOPORTADOS = _TIPOS_CON_PARAMETRO | _TIPOS_SIN_PARAMETRO
 
 
 def parametro_valido(p: Decimal | None) -> bool:
@@ -56,6 +56,10 @@ def resolver(tipo: int, parametro: Decimal | None, m: Marcador) -> EstadoSelecci
     """
     if not tipo_soportado(tipo):
         raise ValueError(f"tipo {tipo} no soportado (REGLAS_LIQUIDACION §5)")
+    if tipo in _TIPOS_CON_PARAMETRO and parametro is None:
+        raise ValueError(f"tipo {tipo} requiere parametro (REGLAS_LIQUIDACION §5)")
+    if tipo in _TIPOS_SIN_PARAMETRO and parametro is not None:
+        raise ValueError(f"tipo {tipo} no admite parametro (REGLAS_LIQUIDACION §5)")
     if not parametro_valido(parametro):
         raise ValueError(
             f"parametro {parametro} inválido: solo múltiplos de 0.5 (REGLAS_LIQUIDACION §1)"
@@ -118,14 +122,9 @@ def resolver(tipo: int, parametro: Decimal | None, m: Marcador) -> EstadoSelecci
     # --- 5.5 Total individual — requiere parámetro ---
     # T11/T12 son del LOCAL, T13/T14 del VISITANTE. Solo se nota invertido
     # con un marcador asimétrico (§8, test obligatorio).
-    if tipo in (11, 12):
-        equipo = m.local
-        mas = tipo == 11
-    else:
-        equipo = m.visitante
-        mas = tipo == 13
-
     if tipo in (11, 12, 13, 14):
+        equipo = m.local if tipo in (11, 12) else m.visitante
+        mas = tipo in (11, 13)
         if equipo == parametro:
             return N
         if mas:
