@@ -4,12 +4,16 @@ Implementado contra ESPECIFICACION_FUENTE.md (CLAUDE.md regla 5). Este módulo
 solo obtiene y parsea datos crudos: no decide `confirmado` / `no_confirmado` /
 `requiere_admin` (esa decisión es exclusiva de `cascada_fuentes.py`,
 CLAUDE.md regla 3).
+
+Cliente asíncrono (httpx): python-telegram-bot v20 corre sobre asyncio, y una
+llamada bloqueante con timeout de varios segundos congelaría el event loop
+del bot entero mientras dura.
 """
 
+import asyncio
 import re
-import time
 
-import requests
+import httpx
 
 HOST = "https://bol.1xbet.com"
 REF = 156
@@ -36,31 +40,41 @@ def _validar_ventana(desde: int, hasta: int) -> None:
         )
 
 
-def _get(url: str, params: dict) -> dict:
+async def _get(url: str, params: dict) -> dict:
     """GET con timeout explícito y reintento con backoff exponencial.
 
     Sin headers de autenticación: la API de resultados es pública
     (ESPECIFICACION_FUENTE §1).
+
+    Solo se reintenta lo que puede ser transitorio: timeout, error de
+    conexión, 5xx y 429. El resto de los 4xx (ej. 400 por timestamp
+    desalineado) es un error del llamador, no algo que un reintento arregle,
+    y se propaga de inmediato.
     """
-    ultimo_error: Exception | None = None
-    for intento in range(REINTENTOS):
-        try:
-            resp = requests.get(url, params=params, timeout=TIMEOUT_S)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as exc:
-            ultimo_error = exc
-            if intento < REINTENTOS - 1:
-                time.sleep(BACKOFF_BASE_S * (2**intento))
-    raise ultimo_error
+    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+        for intento in range(REINTENTOS):
+            ultimo_intento = intento == REINTENTOS - 1
+            try:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                reintentable = status >= 500 or status == 429
+                if not reintentable or ultimo_intento:
+                    raise
+            except (httpx.TimeoutException, httpx.ConnectError):
+                if ultimo_intento:
+                    raise
+            await asyncio.sleep(BACKOFF_BASE_S * (2**intento))
 
 
-def obtener_champs(sport_id: int, desde: int, hasta: int) -> list[dict]:
+async def obtener_champs(sport_id: int, desde: int, hasta: int) -> list[dict]:
     """Ligas con resultados en la ventana (ESPECIFICACION_FUENTE §3.1, v2)."""
     desde = alinear_ts(desde)
     hasta = alinear_ts(hasta)
     _validar_ventana(desde, hasta)
-    data = _get(
+    data = await _get(
         f"{HOST}/service-api/result/web/api/v2/champs",
         {
             "dateFrom": desde,
@@ -73,7 +87,7 @@ def obtener_champs(sport_id: int, desde: int, hasta: int) -> list[dict]:
     return data.get("items", [])
 
 
-def obtener_partidos(champ_id: int, desde: int, hasta: int) -> list[dict]:
+async def obtener_partidos(champ_id: int, desde: int, hasta: int) -> list[dict]:
     """Partidos de una liga en la ventana (ESPECIFICACION_FUENTE §3.2, v3).
 
     Cuando `count` es 0, la clave `items` no existe en la respuesta: se usa
@@ -82,7 +96,7 @@ def obtener_partidos(champ_id: int, desde: int, hasta: int) -> list[dict]:
     desde = alinear_ts(desde)
     hasta = alinear_ts(hasta)
     _validar_ventana(desde, hasta)
-    data = _get(
+    data = await _get(
         f"{HOST}/service-api/result/web/api/v3/games",
         {"champId": champ_id, "dateFrom": desde, "dateTo": hasta, "lng": LNG, "ref": REF},
     )
