@@ -126,11 +126,18 @@ async def evaluar(
 ) -> ResultadoEvaluado:
     """Evalúa el estado de un resultado. El primer guarda que dispara, gana.
 
-    ⚠️ Escribe en `observaciones_resultado` pero **no hace commit**. El
-    llamador es dueño de la transacción (ej. `settlement_engine.py` corriendo
-    dentro de su propio `BEGIN IMMEDIATE`) y responsable de confirmarla o
-    revertirla. Un commit interno acá rompería esa garantía: confirmaría el
-    trabajo parcial del llamador y le impediría hacer rollback.
+    ⚠️ Escribe en `observaciones_resultado` pero NO hace commit. El llamador
+    es dueño de la transacción y responsable de confirmarla.
+
+    La observación se confirma SIEMPRE, incluso cuando el resultado es
+    NO_CONFIRMADO: si esa escritura se revierte, el reloj de estabilidad de
+    15 minutos nunca arranca y ningún partido llega a confirmarse.
+
+    Son dos transacciones separadas (ESQUEMA_DB.md):
+        TX1  evaluar() → commit          (siempre)
+        TX2  si CONFIRMADO → resolver → pagar → commit
+
+    evaluar() nunca corre dentro de la transacción de pago.
     """
     items = await cliente_1x.obtener_partidos(
         champ_id, date_start, date_start + cliente_1x.VENTANA_MAX_S
