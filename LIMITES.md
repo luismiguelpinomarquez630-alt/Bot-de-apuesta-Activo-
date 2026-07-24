@@ -154,6 +154,31 @@ def exposicion_evento(game_id, moneda) -> Decimal:
 ⚠️ Para combinadas, `payout_potencial` es el del **ticket completo**, no la parte
 proporcional de esa pata.
 
+### Implementación elegida para Fase 1: sobre-cálculo
+
+El cálculo exacto de arriba enumera escenarios y depende de
+`resultados_posibles(game_id)` — eso no existe hoy y acoplaría este límite a
+`resolver()` y al marcador real. Fase 1 usa una aproximación más simple,
+implementada en `bot/core/exposicion.py`:
+
+```
+exposicion_evento(game_id, moneda) = suma de payout_pot_cent de TODOS los
+tickets pendientes con una selección pendiente en ese game_id, en esa moneda.
+```
+
+Es un límite superior del peor caso real: asume que todas las apuestas del
+evento ganan a la vez, aunque algunas sean excluyentes entre sí ("gana Local" y
+"gana Visitante" del mismo partido nunca ganan juntas, pero esta suma las
+cuenta como si pudieran). Se elige a propósito:
+
+- nunca subestima el riesgo — es el lado seguro de un límite
+- es O(n), una suma, sin enumerar resultados
+- no depende de `resolver()` ni de conocer el marcador
+
+El cálculo exacto por escenarios queda pendiente para más adelante, si hiciera
+falta afinar el límite y dejar de suspender eventos antes de lo estrictamente
+necesario.
+
 ### Al superarse
 
 ```
