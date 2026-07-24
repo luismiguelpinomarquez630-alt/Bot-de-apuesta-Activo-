@@ -7,7 +7,7 @@ tool_name=$(echo "$input" | jq -r '.tool_name // empty')
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
 command=$(echo "$input" | jq -r '.tool_input.command // empty')
 
-PATTERN="settlement_engine|fuente_resultados|cascada_fuentes|score_final_confirmado|payout|liquidacion"
+PATTERN="settlement_engine|fuente_resultados|cascada_fuentes|score_final_confirmado|payout|liquidacion|limites|exposicion|banca"
 
 READ_ONLY_PREFIX="^(cat|less|more|head|tail|grep|rg|ls|find|wc|sed -n|awk|git diff|git show|git log|git status|git blame|pytest|python -m pytest)\b"
 
