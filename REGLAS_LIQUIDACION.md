@@ -423,6 +423,25 @@ asumido y conocido de Fase 1. Mitigación práctica: revisión manual de los
 partidos cuyo resultado difiera de lo esperado, hasta encontrar un campo que lo
 señale.
 
+### Heurística parcial: exactamente 1 periodo en `periodos_raw`
+
+`cascada_fuentes.py` cierra **parcialmente** este hueco. Un partido de fútbol
+terminado normalmente trae 2 periodos en `periodos_raw` (primer y segundo
+tiempo). Si trae exactamente 1, es la firma de un abandono **antes de que
+empiece o durante el primer tiempo** — nunca se generó el segundo periodo — y
+se manda a `REQUIERE_ADMIN` con motivo `"un solo periodo, posible partido
+abandonado"`.
+
+⚠️ **Es una heurística estructural, no una señal del proveedor.** No cubre el
+caso original de este apartado: un abandono en el minuto 70 u 80 ocurre
+**durante** el segundo tiempo, así que `periodos_raw` ya tiene sus 2 periodos
+(el primero completo, el segundo parcial) y pasa esta guarda sin disparar
+nada. Ese abandono **sigue sin detectarse**.
+
+`periodos_raw` vacío (0 periodos, sin desglose) no dispara esta guarda: nunca
+se observó ese caso en la API real, así que no hay base verificada para
+decidir qué significa (ver `cascada_fuentes.py`, `_tiene_un_solo_periodo`).
+
 ---
 
 ## 11. No verificado

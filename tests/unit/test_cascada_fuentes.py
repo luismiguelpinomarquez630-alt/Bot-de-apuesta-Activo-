@@ -208,6 +208,47 @@ def test_marcador_igual_entre_consultas_mantiene_estabilidad(conn):
     assert fila == (ahora_ts - 2000, ahora_ts)  # visto_primera_vez_ts intacto
 
 
+# --- Guarda nueva: exactamente 1 periodo (posible abandono) ---------------
+
+
+def test_un_solo_periodo_requiere_admin(conn):
+    item = _item_base()
+    item["score"] = "1:0 (1:0)"  # un solo tiempo registrado
+    resultado = _evaluar(item=item, ahora_ts=DATE_START + 10800, conn=conn)
+    assert resultado.estado == cascada_fuentes.EstadoResultado.REQUIERE_ADMIN
+    assert resultado.motivo == "un solo periodo, posible partido abandonado"
+    assert resultado.marcador_raw == "1:0 (1:0)"
+
+
+def test_dos_periodos_sigue_el_flujo_normal(conn):
+    """Control: 2 periodos (el caso normal, ambos tiempos jugados) no dispara
+    la guarda nueva y sigue evaluando como cualquier otro partido."""
+    resultado = _evaluar(item=_item_base(), ahora_ts=DATE_START + 3600, conn=conn)
+    assert resultado.estado == cascada_fuentes.EstadoResultado.NO_CONFIRMADO
+    assert resultado.motivo == "todavía no pasaron 2h desde el inicio del partido"
+
+
+# --- El llamador controla la transacción: evaluar() no hace commit --------
+
+
+def test_evaluar_no_commitea_el_llamador_controla_la_transaccion(conn):
+    """evaluar() escribe en observaciones_resultado pero no confirma. Si el
+    llamador hace rollback (porque el resto de su propia transacción falló),
+    lo que evaluar() escribió tiene que desaparecer con él."""
+    item = _item_base()
+
+    resultado1 = _evaluar(item=item, ahora_ts=DATE_START + 10800, conn=conn)
+    assert resultado1.estado == cascada_fuentes.EstadoResultado.NO_CONFIRMADO
+
+    resultado2 = _evaluar(item=item, ahora_ts=DATE_START + 10900, conn=conn)
+    assert resultado2.estado == cascada_fuentes.EstadoResultado.NO_CONFIRMADO
+
+    conn.rollback()
+
+    filas = conn.execute("SELECT COUNT(*) FROM observaciones_resultado").fetchone()[0]
+    assert filas == 0
+
+
 # --- FUENTES: cascada explícita, hoy con una sola fuente -------------------
 
 

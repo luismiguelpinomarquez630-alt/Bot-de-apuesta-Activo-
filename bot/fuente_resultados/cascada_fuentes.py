@@ -45,14 +45,39 @@ class ResultadoEvaluado:
     motivo: str
 
 
+def _cantidad_de_periodos(marcador: dict) -> int:
+    """Cuenta los periodos en periodos_raw. 0 si está vacío (sin desglose).
+
+    periodos_raw vacío nunca se observó en la API real — todas las muestras de
+    ESPECIFICACION_FUENTE.md traen los 2 tiempos — así que se trata como "sin
+    dato", no como una cantidad real de periodos.
+    """
+    periodos_raw = marcador.get("periodos_raw") or ""
+    if not periodos_raw:
+        return 0
+    return len(periodos_raw.split(","))
+
+
 def _tiene_prorroga(marcador: dict) -> bool:
     """Más de 2 periodos en periodos_raw es indicio de prórroga
     (REGLAS_LIQUIDACION §3): 1X2, totales y hándicaps se resuelven al final
     del tiempo reglamentario, sin prórroga ni penales."""
-    periodos_raw = marcador.get("periodos_raw") or ""
-    if not periodos_raw:
-        return False
-    return len(periodos_raw.split(",")) > 2
+    return _cantidad_de_periodos(marcador) > 2
+
+
+def _tiene_un_solo_periodo(marcador: dict) -> bool:
+    """Exactamente 1 periodo es anómalo en fútbol: un partido terminado trae 2
+    (primer y segundo tiempo). Es la firma de un partido abandonado en el
+    descanso o antes (REGLAS_LIQUIDACION §10).
+
+    0 periodos (periodos_raw vacío) NO dispara esta guarda. No hay ninguna
+    muestra en ESPECIFICACION_FUENTE.md de un score sin desglose de tiempos,
+    así que no hay base verificada para decidir qué significa — tratarlo como
+    sospechoso sería una regla sobre un supuesto no verificado (CLAUDE.md
+    regla 5). Si aparece en producción, hay que verificarlo y actualizar este
+    comentario y REGLAS_LIQUIDACION.md antes de decidir su tratamiento.
+    """
+    return _cantidad_de_periodos(marcador) == 1
 
 
 def _registrar_observacion(
@@ -89,7 +114,6 @@ def _registrar_observacion(
             "ultima_consulta_ts = excluded.ultima_consulta_ts",
             (game_id, marcador_raw, ahora_ts, ahora_ts),
         )
-    conn.commit()
     return visto_primera_vez_ts
 
 
@@ -100,7 +124,14 @@ async def evaluar(
     ahora_ts: int,
     conn: sqlite3.Connection,
 ) -> ResultadoEvaluado:
-    """Evalúa el estado de un resultado. El primer guarda que dispara, gana."""
+    """Evalúa el estado de un resultado. El primer guarda que dispara, gana.
+
+    ⚠️ Escribe en `observaciones_resultado` pero **no hace commit**. El
+    llamador es dueño de la transacción (ej. `settlement_engine.py` corriendo
+    dentro de su propio `BEGIN IMMEDIATE`) y responsable de confirmarla o
+    revertirla. Un commit interno acá rompería esa garantía: confirmaría el
+    trabajo parcial del llamador y le impediría hacer rollback.
+    """
     items = await cliente_1x.obtener_partidos(
         champ_id, date_start, date_start + cliente_1x.VENTANA_MAX_S
     )
@@ -146,6 +177,13 @@ async def evaluar(
             EstadoResultado.REQUIERE_ADMIN,
             item["score"],
             "más de 2 periodos en periodos_raw, indicio de prórroga",
+        )
+
+    if _tiene_un_solo_periodo(marcador):
+        return ResultadoEvaluado(
+            EstadoResultado.REQUIERE_ADMIN,
+            item["score"],
+            "un solo periodo, posible partido abandonado",
         )
 
     visto_primera_vez_ts = _registrar_observacion(conn, game_id, item["score"], ahora_ts)
