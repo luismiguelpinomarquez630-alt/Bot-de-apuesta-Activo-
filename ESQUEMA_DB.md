@@ -173,6 +173,34 @@ CREATE INDEX ix_mov_usuario      ON movimientos(usuario_id, moneda, ts);
 
 ---
 
+## 2.1 Observaciones de resultado (regla de estabilidad)
+
+`fuente_resultados/cascada_fuentes.py` decide `confirmado` / `no_confirmado` /
+`requiere_admin` según si el marcador se mantuvo estable un tiempo mínimo
+(ESPECIFICACION_FUENTE §11). Esa regla necesita persistencia: un reinicio del
+bot no puede borrar lo observado, o se volvería a contar la estabilidad desde
+cero en cada arranque.
+
+```sql
+-- ---------------------------------------------------------------
+CREATE TABLE observaciones_resultado (
+    game_id                  INTEGER PRIMARY KEY,
+    marcador_raw             TEXT    NOT NULL,
+    visto_primera_vez_ts     INTEGER NOT NULL,
+    ultima_consulta_ts       INTEGER NOT NULL
+);
+```
+
+Semántica (migración `002_observaciones_resultado.sql`):
+
+- Marcador igual al guardado → solo actualiza `ultima_consulta_ts`.
+- Marcador distinto → reemplaza y **resetea** `visto_primera_vez_ts`.
+
+`visto_primera_vez_ts` es "desde cuándo el marcador no cambia". Es lo que
+`cascada_fuentes.py` compara contra los 15 minutos de estabilidad exigidos.
+
+---
+
 ## 3. Por qué cada índice
 
 | Índice | Consulta que sirve |
@@ -194,6 +222,7 @@ CREATE INDEX ix_mov_usuario      ON movimientos(usuario_id, moneda, ts);
 | `movimientos` tipo `ajuste_admin` | Solo flujo de admin, con `nota` obligatoria |
 | `selecciones.estado` | Solo `settlement_engine.py` |
 | `saldos` | Nunca directo: siempre junto al `movimiento` que lo causa |
+| `observaciones_resultado` | Solo `fuente_resultados/cascada_fuentes.py` |
 
 ### Transacción de aceptación
 
@@ -267,6 +296,7 @@ numerado, y **solo hacia adelante**: no se editan migraciones ya aplicadas.
 ```
 bot/db/migraciones/
   001_esquema_inicial.sql
+  002_observaciones_resultado.sql
 ```
 
 Motivo: la base de producción tiene dinero real. Reescribir una migración ya
