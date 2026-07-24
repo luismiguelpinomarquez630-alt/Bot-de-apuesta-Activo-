@@ -32,6 +32,13 @@ bot/
    determina eso por su cuenta.
 4. Ningún módulo escribe en la tabla `payouts` salvo `settlement_engine.py`,
    y solo cuando el resultado viene marcado `confirmado`.
+5. Todo módulo bajo bot/fuente_resultados/ se implementa
+   contra ESPECIFICACION_FUENTE.md. Los puntos marcados ❌
+   en ese documento son supuestos NO verificados: está
+   prohibido escribir código que dependa de ellos. Si al
+   implementar aparece un supuesto que no está en el
+   documento, se detiene, se verifica y se añade allí
+   antes de escribir el código.
 
 ## Reglas de liquidación
 
