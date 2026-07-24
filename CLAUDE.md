@@ -39,6 +39,13 @@ bot/
    implementar aparece un supuesto que no está en el
    documento, se detiene, se verifica y se añade allí
    antes de escribir el código.
+6. Todo módulo bajo bot/core/ que acepte una apuesta
+   debe verificar los límites de LIMITES.md ANTES de
+   aceptarla, dentro de la misma transacción que
+   debita el saldo (BEGIN IMMEDIATE). Cada moneda es
+   un libro contable independiente: banca, exposición
+   y conciliación propias. Está prohibido pagar un
+   premio con la banca de otra moneda.
 
 ## Reglas de liquidación
 
