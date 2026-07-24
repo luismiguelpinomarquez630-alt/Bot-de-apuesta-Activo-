@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 
+from bot.dominio.mercados import TIPOS_SOPORTADOS, linea_valida
+
 
 class EstadoSeleccion(Enum):
     GANADA = "ganada"
@@ -30,20 +32,21 @@ class Marcador:
 
 _TIPOS_CON_PARAMETRO = frozenset({7, 8, 9, 10, 11, 12, 13, 14})
 _TIPOS_SIN_PARAMETRO = frozenset({1, 2, 3, 4, 5, 6, 180, 181})
-_TIPOS_SOPORTADOS = _TIPOS_CON_PARAMETRO | _TIPOS_SIN_PARAMETRO
 
 
 def parametro_valido(p: Decimal | None) -> bool:
     """Solo líneas enteras o de medio punto (REGLAS_LIQUIDACION §1). Los
-    cuartos (asiáticas) parten el stake en dos y se rechazan en Fase 1."""
-    if p is None:
-        return True
-    return (p * 2) % 1 == 0
+    cuartos (asiáticas) parten el stake en dos y se rechazan en Fase 1.
+
+    Delegado a bot.dominio.mercados (CAPA 0, CLAUDE.md regla 8)."""
+    return linea_valida(p)
 
 
 def tipo_soportado(t: int) -> bool:
-    """Exactamente los tipos verificados de REGLAS_LIQUIDACION §5."""
-    return t in _TIPOS_SOPORTADOS
+    """Exactamente los tipos verificados de REGLAS_LIQUIDACION §5.
+
+    Delegado a bot.dominio.mercados (CAPA 0, CLAUDE.md regla 8)."""
+    return t in TIPOS_SOPORTADOS
 
 
 def resolver(tipo: int, parametro: Decimal | None, m: Marcador) -> EstadoSeleccion:

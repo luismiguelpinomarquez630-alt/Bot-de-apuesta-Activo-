@@ -18,6 +18,7 @@ bot/
   telegram/          # CAPA 3 — interacción con el usuario (handlers, keyboards)
   core/               # CAPA 2 — motor de negocio (settlement_engine.py, apuestas.py)
   fuente_resultados/  # CAPA 1 — datos externos (cascada_fuentes.py, confianza.py)
+  dominio/            # CAPA 0 — catálogo de dominio puro (mercados.py)
   db/                 # modelos y migraciones
   observabilidad/     # alertas y healthcheck
 ```
@@ -52,6 +53,11 @@ bot/
    Ninguna regla se mergea sin los tests de §8. Los
    mercados de §9 se filtran en la capa de
    presentación, no en el liquidador.
+8. `bot/dominio/` es CAPA 0: no importa de ninguna otra
+   capa del proyecto (ni de `core/`, ni de
+   `fuente_resultados/`, ni de `telegram/`). Cualquier
+   capa puede importar de `dominio/` — es la única
+   dirección permitida.
 
 ## Reglas de liquidación
 
