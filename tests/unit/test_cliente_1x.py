@@ -1,5 +1,6 @@
 import asyncio
 import json
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -193,3 +194,73 @@ def test_get_con_reintentos_cero_levanta_runtime_error_no_none(monkeypatch):
     with pytest.raises(RuntimeError):
         resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
         assert resultado is not None  # nunca debería llegar a evaluarse
+
+
+# --- obtener_cuotas (mockeado a nivel de _get, ningún test toca la red) ----
+
+
+def test_obtener_cuotas_filtra_tipo_no_soportado_y_su_linea():
+    respuesta = _cargar("lineFeed_get1x2_vzip.json")
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+
+    assert len(resultado) == 1
+    evento = resultado[0]
+    assert len(evento.mercados) == 9
+    assert {m.tipo for m in evento.mercados} == {1, 2, 3, 7, 8, 9, 10, 180, 181}
+    assert 3827 not in {m.tipo for m in evento.mercados}
+
+
+def test_obtener_cuotas_mapea_el_evento():
+    respuesta = _cargar("lineFeed_get1x2_vzip.json")
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+
+    evento = resultado[0]
+    assert evento.game_id == 730330581
+    assert evento.champ_id == 110163
+    assert evento.sport_id == 1
+    assert evento.inicio_ts == 1787416200
+    assert evento.equipo_local == "Inter de Milán"
+    assert evento.equipo_visitante == "Monza 1912"
+
+
+def test_obtener_cuotas_cuota_milesimas():
+    respuesta = _cargar("lineFeed_get1x2_vzip.json")
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+
+    mercado_t7 = next(m for m in resultado[0].mercados if m.tipo == 7)
+    assert mercado_t7.cuota_milesimas == 1788
+    assert mercado_t7.parametro == Decimal("-1.5")
+    assert mercado_t7.group == 2
+
+
+def test_obtener_cuotas_success_false_levanta_error():
+    respuesta = {"Success": False, "Error": "algo salió mal", "Value": []}
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        with pytest.raises(RuntimeError):
+            asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+
+
+def test_obtener_cuotas_value_vacio_devuelve_lista_vacia():
+    respuesta = {"Success": True, "Value": []}
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+
+    assert resultado == []
+
+
+def test_obtener_cuotas_nunca_pide_virtual_sports_true():
+    respuesta = {"Success": True, "Value": []}
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta) as mock_get:
+        asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+
+    _, params = mock_get.call_args[0]
+    assert params["virtualSports"] is False

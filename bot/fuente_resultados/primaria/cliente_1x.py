@@ -12,8 +12,12 @@ del bot entero mientras dura.
 
 import asyncio
 import re
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 
 import httpx
+
+from bot.dominio.mercados import TIPOS_SOPORTADOS, linea_valida
 
 HOST = "https://bol.1xbet.com"
 REF = 156
@@ -23,6 +27,11 @@ VENTANA_MAX_S = 86400  # único tamaño de ventana verificado, ESPECIFICACION_FU
 TIMEOUT_S = 10
 REINTENTOS = 3
 BACKOFF_BASE_S = 1.0
+
+# Parámetros fijos de LineFeed/Get1x2_VZip, ESPECIFICACION_FUENTE §3.3.
+LINEFEED_CFVIEW = 2
+LINEFEED_MODE = 4
+LINEFEED_COUNTRY = 97
 
 _RX_SCORE = re.compile(r"^(\d+):(\d+)\s*(?:\(([^)]*)\))?$")
 
@@ -157,3 +166,79 @@ def parse_score(raw: str | None) -> dict | None:
         "visitante": int(m.group(2)),
         "periodos_raw": m.group(3) or "",
     }
+
+
+@dataclass(frozen=True)
+class MercadoCuota:
+    tipo: int  # T
+    cuota_milesimas: int  # C, *1000 redondeado HALF_UP
+    parametro: Decimal | None  # P, si viene
+    group: int | None  # G
+
+
+@dataclass(frozen=True)
+class EventoCuotas:
+    game_id: int  # I
+    champ_id: int  # LI
+    sport_id: int  # SI
+    inicio_ts: int  # S
+    equipo_local: str  # O1
+    equipo_visitante: str  # O2
+    mercados: list[MercadoCuota]  # E[], ya filtrados
+
+
+def _parsear_mercado(e: dict) -> MercadoCuota | None:
+    """None si el mercado se descarta: tipo no soportado o línea inválida
+    (regla de producto, ESPECIFICACION_FUENTE §8.2 / REGLAS_LIQUIDACION §1)."""
+    tipo = e["T"]
+    if tipo not in TIPOS_SOPORTADOS:
+        return None
+    parametro = Decimal(str(e["P"])) if "P" in e else None
+    if not linea_valida(parametro):
+        return None
+    cuota_milesimas = int((Decimal(str(e["C"])) * 1000).to_integral_value(ROUND_HALF_UP))
+    return MercadoCuota(tipo=tipo, cuota_milesimas=cuota_milesimas, parametro=parametro, group=e.get("G"))
+
+
+def _parsear_evento(item: dict) -> EventoCuotas:
+    mercados = [m for e in item.get("E", []) if (m := _parsear_mercado(e)) is not None]
+    return EventoCuotas(
+        game_id=item["I"],
+        champ_id=item["LI"],
+        sport_id=item["SI"],
+        inicio_ts=item["S"],
+        equipo_local=item["O1"],
+        equipo_visitante=item["O2"],
+        mercados=mercados,
+    )
+
+
+async def obtener_cuotas(sport_id: int, count: int) -> list[EventoCuotas]:
+    """Cuotas prepartido en bloque (ESPECIFICACION_FUENTE §3.3).
+
+    ⚠️ `virtualSports=false` SIEMPRE: `true` mete deportes simulados al feed.
+
+    LineFeed/*Zip usa el sobre `{Success, Value}` (con V mayúscula), a
+    diferencia de los endpoints `/result/`, que usan `{items}`. Si
+    `Success` es false, es un error — no se intenta parsear `Value`.
+
+    Filtra mercados no soportados (REGLAS_LIQUIDACION §5) y líneas que no
+    son múltiplo de 0.5 (cuartos, rechazados en Fase 1): el feed trae
+    cientos de tipos, los que no sabemos liquidar no se ofrecen.
+    """
+    payload = await _get(
+        f"{HOST}/service-api/LineFeed/Get1x2_VZip",
+        {
+            "sports": sport_id,
+            "count": count,
+            "lng": LNG,
+            "cfview": LINEFEED_CFVIEW,
+            "mode": LINEFEED_MODE,
+            "country": LINEFEED_COUNTRY,
+            "partner": REF,
+            "virtualSports": False,
+        },
+    )
+    if not payload.get("Success"):
+        raise RuntimeError(f"Get1x2_VZip devolvió Success=false: {payload.get('Error')!r}")
+    return [_parsear_evento(item) for item in payload.get("Value", [])]
