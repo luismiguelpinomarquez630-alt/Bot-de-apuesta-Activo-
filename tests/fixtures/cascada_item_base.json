@@ -1,0 +1,13 @@
+{
+  "id": 900000001,
+  "sportId": 1,
+  "champId": 42,
+  "champName": "Liga de Prueba",
+  "opp1": "Local FC",
+  "opp2": "Visitante FC",
+  "opp1Ids": [111],
+  "opp2Ids": [222],
+  "score": "1:1 (1:1,0:0)",
+  "dopInfo": "",
+  "dateStart": 1700000000
+}
