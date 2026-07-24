@@ -46,6 +46,12 @@ bot/
    un libro contable independiente: banca, exposición
    y conciliación propias. Está prohibido pagar un
    premio con la banca de otra moneda.
+7. settlement_engine.py resuelve mercados únicamente
+   según REGLAS_LIQUIDACION.md. La función resolver()
+   es pura: sin DB, sin red, sin efectos secundarios.
+   Ninguna regla se mergea sin los tests de §8. Los
+   mercados de §9 se filtran en la capa de
+   presentación, no en el liquidador.
 
 ## Reglas de liquidación
 
