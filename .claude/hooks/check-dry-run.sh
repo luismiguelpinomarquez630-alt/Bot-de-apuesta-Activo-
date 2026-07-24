@@ -6,7 +6,6 @@ input=$(cat)
 tool_name=$(echo "$input" | jq -r '.tool_name // empty')
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
 command=$(echo "$input" | jq -r '.tool_input.command // empty')
-cwd=$(echo "$input" | jq -r '.cwd // empty')
 
 PATTERN="settlement_engine|settle|fuente_resultados|cascada_fuentes|score_final_confirmado|payout|liquid|limites|exposicion|banca"
 
@@ -19,34 +18,31 @@ READ_ONLY_PREFIX="^(cat|less|more|head|tail|grep|rg|ls|find|wc|sed -n|awk|git di
 CHAIN_OPERATORS='&&|;|\|'
 
 if [ "$tool_name" = "Write" ] || [ "$tool_name" = "Edit" ]; then
-  # Los .md que viven directamente en la raíz del repo son especificación,
-  # no código: no ejecutan nada ni tocan saldos. Se eximen del gate de
-  # dry-run aunque su nombre matchee PATTERN. Cualquier .md bajo bot/
-  # (o cualquier otro archivo, sea .md o no) sigue evaluándose normal.
-  base_fp=$(basename -- "$file_path")
-  dir_fp=$(dirname -- "$file_path")
-  is_root_md=false
-  if [ -n "$cwd" ] && [ "$dir_fp" = "$cwd" ] && echo "$base_fp" | grep -qiE '\.md$'; then
-    is_root_md=true
-  fi
-
-  if [ "$is_root_md" = false ] && echo "$file_path" | grep -qiE "$PATTERN"; then
-    if [ ! -f ".claude/DRY_RUN_OK" ]; then
-      echo '{"decision": "block", "reason": "Bloqueado: este archivo toca liquidación y no existe .claude/DRY_RUN_OK. Corré el dry-run primero y creá ese archivo marcador (touch .claude/DRY_RUN_OK)."}'
-      exit 0
+  # Cualquier .md, en cualquier ruta, es especificación: no ejecuta nada ni
+  # toca saldos. Se exime del gate aunque su nombre o su directorio matcheen
+  # PATTERN (ej. .claude/skills/liquidacion/SKILL.md). Parchear por
+  # directorio (solo raíz) no escala: la exención es por extensión, sin
+  # importar dónde viva el archivo.
+  if ! echo "$file_path" | grep -qiE '\.md$'; then
+    if echo "$file_path" | grep -qiE "$PATTERN"; then
+      if [ ! -f ".claude/DRY_RUN_OK" ]; then
+        echo '{"decision": "block", "reason": "Bloqueado: este archivo toca liquidación y no existe .claude/DRY_RUN_OK. Corré el dry-run primero y creá ese archivo marcador (touch .claude/DRY_RUN_OK)."}'
+        exit 0
+      fi
     fi
   fi
 elif [ "$tool_name" = "Bash" ]; then
-  # Igual que arriba: los nombres de .md de la raíz no deben disparar el
-  # gate solo por aparecer mencionados en el comando (ej. "git add LIMITES.md").
-  # Se les resta del texto antes de evaluar PATTERN; el comando original se
-  # sigue usando para detectar encadenamiento y el prefijo de solo lectura.
-  command_for_pattern="$command"
-  if [ -n "$cwd" ]; then
-    for f in $(cd "$cwd" 2>/dev/null && ls -- *.md 2>/dev/null); do
-      command_for_pattern=${command_for_pattern//$f/}
-    done
-  fi
+  # Igual que arriba: cualquier token del comando que sea una ruta .md se
+  # descarta ENTERO antes de evaluar PATTERN (no solo el nombre de archivo),
+  # para que un fragmento de ruta como "fuente_resultados/" dentro de
+  # ".../fuente_resultados/fallback/README.md" no reintroduzca un match.
+  command_for_pattern=""
+  for tok in $command; do
+    if echo "$tok" | grep -qiE '\.md$'; then
+      continue
+    fi
+    command_for_pattern="$command_for_pattern $tok"
+  done
 
   if echo "$command" | grep -qE "$CHAIN_OPERATORS" && echo "$command_for_pattern" | grep -qiE "$PATTERN"; then
     if [ ! -f ".claude/DRY_RUN_OK" ]; then

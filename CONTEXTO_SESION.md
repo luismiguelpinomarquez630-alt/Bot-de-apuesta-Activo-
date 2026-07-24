@@ -9,3 +9,8 @@ filtro. La protección estructural real está en
 Write/Edit, que matchea rutas bajo bot/. No confiar
 en el gate de Bash como única barrera antes de una
 operación que toque saldos.
+
+DRY_RUN_OK no se usa para editar documentación.
+Si el gate dispara sobre un .md, es un fallo del
+PATTERN y se arregla el PATTERN, no se crea el
+marcador.
