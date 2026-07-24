@@ -270,6 +270,18 @@ if tipo == 181:  return PERDIDA if ambos else GANADA
 
 Nunca produce NULA. `0:0` → `T180` PERDIDA, `T181` GANADA.
 
+### 5.7 Qué tipos requieren parámetro
+
+Está implícito en la descripción de cada mercado de arriba; se deja explícito
+acá porque un `parametro` ausente o presente donde no corresponde es un bug
+del llamador, no un caso de negocio (§9 — `resolver()` lo rechaza con
+`ValueError`).
+
+| Requiere parámetro | Tipos |
+|---|---|
+| Sí | 7, 8, 9, 10, 11, 12, 13, 14 |
+| No | 1, 2, 3, 4, 5, 6, 180, 181 |
+
 ---
 
 ## 6. Liquidación de combinadas
@@ -287,30 +299,53 @@ def resolver_combinada(patas) -> tuple[EstadoSeleccion, Decimal]:
     if EstadoSeleccion.REQUIERE_ADMIN in estados:
         return EstadoSeleccion.REQUIERE_ADMIN, Decimal(0)
 
-    if EstadoSeleccion.PENDIENTE in estados:
-        return EstadoSeleccion.PENDIENTE, Decimal(0)
-
     if EstadoSeleccion.PERDIDA in estados:
         return EstadoSeleccion.PERDIDA, Decimal(0)
+
+    if EstadoSeleccion.PENDIENTE in estados:
+        return EstadoSeleccion.PENDIENTE, Decimal(0)
 
     # Solo quedan GANADA y NULA.
     # Una pata NULA aporta cuota 1.00: no suma, pero tampoco anula el ticket.
     cuota = Decimal(1)
+    hay_ganada = False
     for p in patas:
         if p.estado == EstadoSeleccion.GANADA:
+            hay_ganada = True
             cuota *= p.cuota
+
+    if not hay_ganada:
+        return EstadoSeleccion.NULA, cuota  # TODAS nulas: cuota 1.00, se devuelve el stake
+
     return EstadoSeleccion.GANADA, cuota
 ```
 
-⚠️ **Una pata PERDIDA gana a todo lo demás.** Si hay una perdida y otra
-requiere_admin, el ticket ya está perdido — no hace falta esperar al admin. Aun
-así, el orden de comprobación de arriba manda REQUIERE_ADMIN primero
-deliberadamente: es preferible que un humano mire el ticket antes que cerrarlo
-apoyándose en un dato que quizá está mal.
+⚠️ **Corrección (versión anterior tenía PENDIENTE antes que PERDIDA — era un
+error del documento).** El orden correcto es
+**REQUIERE_ADMIN → PERDIDA → PENDIENTE → GANADA**.
+
+**Por qué PERDIDA va antes que PENDIENTE:** una pata perdida condena el ticket
+matemáticamente — ninguna otra pata pendiente puede revertirlo. Esperar solo
+retiene exposición sobre algo que ya no puede pagar (`LIMITES.md` §4). No hay
+motivo para no cerrarlo ya.
+
+**Por qué REQUIERE_ADMIN sigue yendo primero, incluso antes que PERDIDA:** una
+anomalía (dato roto, partido combinado, prórroga no verificada) puede tener la
+misma causa raíz que la pata marcada perdida — si el dato de origen está mal,
+"perdida" también podría estar mal. Una espera normal (PENDIENTE) no tiene ese
+riesgo: es simplemente un partido que no terminó. Por eso PERDIDA sí le gana a
+PENDIENTE, pero no le gana a REQUIERE_ADMIN.
 
 ### Caso extremo: todas las patas NULAS
 
-`cuota = 1.00` → se devuelve el stake íntegro. Correcto y esperado.
+`cuota = 1.00` → se devuelve el stake íntegro. **El estado del ticket es NULA
+(push), no GANADA.** Una versión anterior de este documento decía GANADA —
+era incorrecta: dejaba el estado NULA como valor muerto y haría que el
+llamador escriba un movimiento `payout` donde corresponde `devolucion`
+(`ESQUEMA_DB.md` §4) para exactamente este caso. Si al menos una pata es
+GANADA (aunque el resto sean NULAS), el ticket sigue siendo GANADA, con la
+cuota reducida por no contar las nulas — solo el caso de **todas** nulas es
+NULA.
 
 ---
 
@@ -336,6 +371,53 @@ tarde o temprano difieren y el usuario cobra algo distinto de lo que le
 prometiste.
 
 Es motivo de queja legítima y de pérdida de confianza inmediata.
+
+### 7.1 Redondeo de combinadas: dos campos, dos momentos
+
+El producto de varias cuotas de 3 decimales acumula más de 3 decimales
+(4 patas → hasta 12). Hay que decidir dónde se redondea, y la decisión es:
+**la cuota efectiva de una combinada se redondea a milésimas antes de
+calcular el payout** — no se acumula en precisión completa y se redondea
+recién al final.
+
+```python
+MIL = Decimal("1000")
+
+def cuota_efectiva_milesimas(cuotas_ganadas_milesimas: list[int]) -> int:
+    producto = Decimal(1)
+    for c in cuotas_ganadas_milesimas:
+        producto *= Decimal(c) / MIL
+    return int((producto * MIL).to_integral_value(ROUND_HALF_UP))
+
+def payout_combinada_cent(stake_cent: int, cuota_efectiva_milesimas: int) -> int:
+    return int(
+        (Decimal(stake_cent) * Decimal(cuota_efectiva_milesimas) / MIL)
+        .to_integral_value(ROUND_HALF_UP)
+    )
+```
+
+**Por qué acá y no al final:** `tickets.cuota_milesimas` (`ESQUEMA_DB.md`) es
+`INTEGER` — no hay dónde guardar 12 decimales. El payout que se le muestra al
+usuario **antes de confirmar** (`payout_pot_cent`) sale de multiplicar las
+cuotas de las patas y redondear a milésimas, porque es la única forma de que
+exista un entero para esa columna. Si la liquidación usara la cuota sin
+redondear, el payout final podría diferir en el último centavo del que se le
+prometió — exactamente el problema que el punto 🔴 de arriba ya prohíbe.
+Redondeando a milésimas en el mismo punto en que `core/apuestas.py` tiene que
+redondear para persistir, los dos cálculos dan siempre el mismo resultado,
+porque las cuotas de las patas están congeladas (§1.3) desde la aceptación.
+
+⚠️ **`cuota_milesimas` y `cuota_efectiva_milesimas` son dos campos distintos,
+a propósito:**
+
+| Campo | Cuándo se calcula | Qué asume |
+|---|---|---|
+| `tickets.cuota_milesimas` | Al aceptar la apuesta | **Todas** las patas ganan — es la cuota "de catálogo" del combo, la que decide `payout_pot_cent` y la exposición (`LIMITES.md` §4) |
+| `cuota_efectiva_milesimas` (liquidación) | Al liquidar | Puede ser **menor** si alguna pata quedó NULA (esa pata aporta 1.000 en vez de su cuota real) |
+
+Son iguales cuando no hay patas NULAS, y `cuota_efectiva_milesimas <=
+cuota_milesimas` siempre. Tratarlos como el mismo campo pagaría de más
+cualquier combinada con una pata nula.
 
 ---
 
