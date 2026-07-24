@@ -26,6 +26,26 @@ BACKOFF_BASE_S = 1.0
 
 _RX_SCORE = re.compile(r"^(\d+):(\d+)\s*(?:\(([^)]*)\))?$")
 
+# Cliente HTTP compartido, para no pagar un handshake TLS nuevo por cada
+# petición. Se crea de forma perezosa: en tiempo de import no hay event loop
+# corriendo, y httpx.AsyncClient lo necesita.
+_cliente: httpx.AsyncClient | None = None
+
+
+def _get_cliente() -> httpx.AsyncClient:
+    global _cliente
+    if _cliente is None:
+        _cliente = httpx.AsyncClient(timeout=TIMEOUT_S)
+    return _cliente
+
+
+async def cerrar_cliente() -> None:
+    """Cierra el cliente HTTP compartido. Llamar al apagar el bot."""
+    global _cliente
+    if _cliente is not None:
+        await _cliente.aclose()
+        _cliente = None
+
 
 def alinear_ts(ts: int) -> int:
     """Los endpoints de resultados exigen múltiplos de 300 s (ESPECIFICACION_FUENTE §2)."""
@@ -46,27 +66,31 @@ async def _get(url: str, params: dict) -> dict:
     Sin headers de autenticación: la API de resultados es pública
     (ESPECIFICACION_FUENTE §1).
 
-    Solo se reintenta lo que puede ser transitorio: timeout, error de
-    conexión, 5xx y 429. El resto de los 4xx (ej. 400 por timestamp
+    Solo se reintenta lo que puede ser transitorio: cualquier error de
+    transporte (timeout, conexión cortada, etc. — httpx.TransportError cubre
+    todos esos casos), 5xx y 429. El resto de los 4xx (ej. 400 por timestamp
     desalineado) es un error del llamador, no algo que un reintento arregle,
     y se propaga de inmediato.
     """
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        for intento in range(REINTENTOS):
-            ultimo_intento = intento == REINTENTOS - 1
-            try:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                return resp.json()
-            except httpx.HTTPStatusError as exc:
-                status = exc.response.status_code
-                reintentable = status >= 500 or status == 429
-                if not reintentable or ultimo_intento:
-                    raise
-            except (httpx.TimeoutException, httpx.ConnectError):
-                if ultimo_intento:
-                    raise
-            await asyncio.sleep(BACKOFF_BASE_S * (2**intento))
+    client = _get_cliente()
+    for intento in range(REINTENTOS):
+        ultimo_intento = intento == REINTENTOS - 1
+        try:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            reintentable = status >= 500 or status == 429
+            if not reintentable or ultimo_intento:
+                raise
+        except httpx.TransportError:
+            if ultimo_intento:
+                raise
+        await asyncio.sleep(BACKOFF_BASE_S * (2**intento))
+    raise RuntimeError(
+        f"_get() no hizo ningún intento: REINTENTOS={REINTENTOS} debe ser >= 1"
+    )
 
 
 async def obtener_champs(sport_id: int, desde: int, hasta: int) -> list[dict]:
