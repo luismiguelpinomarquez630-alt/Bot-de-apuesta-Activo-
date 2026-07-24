@@ -330,6 +330,25 @@ def test_atomicidad_segunda_aceptacion_falla_si_juntas_exceden_el_evento(conn):
     assert tickets == 2  # el previo + el primero aceptado
 
 
+# --- parametro negativo: se guarda y se recupera bien (hándicap -1.5) -----
+
+
+def test_parametro_negativo_se_guarda_como_linea_no_como_dinero(conn):
+    """a_centavos (dinero) coincide numéricamente con linea_a_centesimas
+    (línea) para -1.5, pero son conversiones distintas por contrato: esto
+    prueba el camino real de aceptar_apuesta(), no solo la función pura."""
+    _crear_usuario(conn, saldo_cent=1000_00)
+    seleccion = _seleccion(game_id=100, market_type=7, parametro=Decimal("-1.5"), cuota_vista_ms=1900)
+    cache = _mock_cache({(100, 7, Decimal("-1.5")): 1900})
+
+    with patch.object(apuestas, "obtener_cuota_fresca", cache):
+        resultado = apuestas.aceptar_apuesta(conn, 1, "CUP", 20_00, [seleccion], AHORA_TS)
+
+    assert resultado.estado == EstadoAceptacion.ACEPTADA
+    parametro_centesimas = conn.execute("SELECT parametro_centesimas FROM selecciones").fetchone()[0]
+    assert parametro_centesimas == -150
+
+
 # --- 12. El ledger cuadra tras un lote --------------------------------------
 
 

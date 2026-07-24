@@ -27,8 +27,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 
 from bot.core.exposicion import BANCAS, cabe_apuesta
-from bot.db.conversion import a_centavos
 from bot.dominio.combinadas import combinada_valida
+from bot.dominio.mercados import linea_a_centesimas
 from bot.dominio.tiempo import inicio_de_dia_habana
 from bot.fuente_resultados.cache_cuotas import UMBRAL_BAJA, obtener_cuota_fresca
 
@@ -233,7 +233,7 @@ def aceptar_apuesta(
     ticket_id = cursor.lastrowid
 
     for s, sellada_ms in zip(selecciones, selladas_ms):
-        parametro_centesimas = a_centavos(s.parametro) if s.parametro is not None else None
+        parametro_centesimas = linea_a_centesimas(s.parametro) if s.parametro is not None else None
         conn.execute(
             "INSERT INTO selecciones (ticket_id, game_id, champ_id, sport_id, market_type, "
             "parametro_centesimas, cuota_milesimas, equipo_local, equipo_visitante, inicio_ts, estado) "

@@ -1,6 +1,13 @@
 from decimal import Decimal
 
-from bot.dominio.mercados import TIPOS_SOPORTADOS, linea_valida
+import pytest
+
+from bot.dominio.mercados import (
+    TIPOS_SOPORTADOS,
+    centesimas_a_linea,
+    linea_a_centesimas,
+    linea_valida,
+)
 
 
 def test_tipos_soportados_son_los_16_de_reglas_liquidacion():
@@ -19,3 +26,19 @@ def test_linea_valida_multiplos_de_0_5():
 def test_linea_valida_rechaza_cuartos():
     assert linea_valida(Decimal("2.75")) is False
     assert linea_valida(Decimal("1.25")) is False
+
+
+# --- linea_a_centesimas / centesimas_a_linea --------------------------------
+
+
+@pytest.mark.parametrize("p", [Decimal("-1.5"), Decimal("0.5"), Decimal("2.5"), Decimal("-0.5"), Decimal("3.5")])
+def test_ida_y_vuelta_no_pierde_el_valor(p):
+    assert centesimas_a_linea(linea_a_centesimas(p)) == p
+
+
+def test_linea_a_centesimas_negativa():
+    assert linea_a_centesimas(Decimal("-1.5")) == -150
+
+
+def test_centesimas_a_linea_negativa():
+    assert centesimas_a_linea(-150) == Decimal("-1.5")
