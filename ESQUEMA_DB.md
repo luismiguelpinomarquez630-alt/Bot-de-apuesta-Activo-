@@ -222,7 +222,7 @@ Semántica (migración `002_observaciones_resultado.sql`):
 | `movimientos` tipo `ajuste_admin` | Solo flujo de admin, con `nota` obligatoria |
 | `selecciones.estado` | Solo `settlement_engine.py` |
 | `saldos` | Nunca directo: siempre junto al `movimiento` que lo causa |
-| `observaciones_resultado` | Solo `fuente_resultados/cascada_fuentes.py` |
+| `observaciones_resultado` | Solo `fuente_resultados/cascada_fuentes.py`. Se confirma **siempre**, ver nota abajo |
 
 ### Transacción de aceptación
 
@@ -254,6 +254,22 @@ COMMIT
 ```
 
 El fallo del índice único **no es un error**: es la idempotencia funcionando.
+
+### `observaciones_resultado` se confirma en su propia transacción, siempre
+
+`observaciones_resultado` se confirma **siempre**, incluso cuando el resultado
+es `NO_CONFIRMADO`. Si esa escritura se revierte junto con una transacción de
+pago fallida, el reloj de estabilidad de 15 minutos nunca arranca y ningún
+partido llega a confirmarse.
+
+Son dos transacciones separadas:
+
+```
+TX1  evaluar() → commit          (siempre)
+TX2  si CONFIRMADO → resolver → pagar → commit
+```
+
+Nunca una sola transacción que abarque ambas.
 
 ---
 
