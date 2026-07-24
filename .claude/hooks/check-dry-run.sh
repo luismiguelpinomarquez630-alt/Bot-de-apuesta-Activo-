@@ -11,6 +11,12 @@ PATTERN="settlement_engine|fuente_resultados|cascada_fuentes|score_final_confirm
 
 READ_ONLY_PREFIX="^(cat|less|more|head|tail|grep|rg|ls|find|wc|sed -n|awk|git diff|git show|git log|git status|git blame|pytest|python -m pytest)\b"
 
+# Un prefijo de solo lectura solo cubre el primer subcomando. Un comando
+# encadenado con &&, ; o | puede ejecutar algo mutante después del prefijo
+# (limitación conocida). Si hay encadenamiento y el comando matchea PATTERN,
+# se bloquea siempre, sin importar cómo empiece.
+CHAIN_OPERATORS='&&|;|\|'
+
 if [ "$tool_name" = "Write" ] || [ "$tool_name" = "Edit" ]; then
   if echo "$file_path" | grep -qiE "$PATTERN"; then
     if [ ! -f ".claude/DRY_RUN_OK" ]; then
@@ -19,6 +25,13 @@ if [ "$tool_name" = "Write" ] || [ "$tool_name" = "Edit" ]; then
     fi
   fi
 elif [ "$tool_name" = "Bash" ]; then
+  if echo "$command" | grep -qE "$CHAIN_OPERATORS" && echo "$command" | grep -qiE "$PATTERN"; then
+    if [ ! -f ".claude/DRY_RUN_OK" ]; then
+      echo '{"decision": "block", "reason": "Bloqueado: comando encadenado (&&, ; o |) que matchea codigo/datos de liquidacion. No se permite encadenar aunque el primer subcomando sea de solo lectura. Corré el dry-run y creá .claude/DRY_RUN_OK, o separá el comando en pasos individuales."}'
+      exit 0
+    fi
+  fi
+
   if echo "$command" | grep -qE "$READ_ONLY_PREFIX"; then
     echo '{"decision": "approve"}'
     exit 0
