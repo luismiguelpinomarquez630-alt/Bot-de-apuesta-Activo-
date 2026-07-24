@@ -15,6 +15,17 @@ def _cargar(nombre):
     return json.loads((FIXTURES / nombre).read_text())
 
 
+@pytest.fixture(autouse=True)
+def _resetear_cliente_compartido():
+    """El cliente HTTP es un singleton perezoso ligado al event loop que lo
+    creó. Cada test corre en su propio asyncio.run() (su propio event loop),
+    así que hay que resetearlo entre casos o un test contamina al siguiente
+    con un cliente atado a un loop ya cerrado."""
+    cliente_1x._cliente = None
+    yield
+    cliente_1x._cliente = None
+
+
 # --- alinear_ts ---------------------------------------------------------
 
 
@@ -128,6 +139,21 @@ def test_obtener_partidos_rechaza_ventana_mayor_a_86400s():
 # --- _get: reintentos discriminados por tipo de error, sin tocar la red ---
 
 
+def test_get_cliente_reutiliza_la_misma_instancia():
+    a = cliente_1x._get_cliente()
+    b = cliente_1x._get_cliente()
+    assert a is b
+
+
+def test_cerrar_cliente_resetea_el_singleton():
+    cliente_1x._get_cliente()
+    assert cliente_1x._cliente is not None
+
+    asyncio.run(cliente_1x.cerrar_cliente())
+
+    assert cliente_1x._cliente is None
+
+
 def _fake_get_con_status(status_code, llamadas):
     async def fake_get(self, url, params=None, **kwargs):
         llamadas.append(status_code)
@@ -157,3 +183,13 @@ def test_get_500_reintenta_hasta_agotar_intentos(monkeypatch):
             asyncio.run(cliente_1x._get("http://example.test/x", {}))
 
     assert len(llamadas) == cliente_1x.REINTENTOS
+
+
+def test_get_con_reintentos_cero_levanta_runtime_error_no_none(monkeypatch):
+    """REINTENTOS <= 0 es una config rota: debe fallar fuerte y cerca de la
+    causa, no devolver None en silencio."""
+    monkeypatch.setattr(cliente_1x, "REINTENTOS", 0)
+
+    with pytest.raises(RuntimeError):
+        resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
+        assert resultado is not None  # nunca debería llegar a evaluarse
