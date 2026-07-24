@@ -68,6 +68,16 @@ Un ticket **no puede pagarse dos veces**, ni aunque el liquidador corra dos
 veces. Se garantiza con índice único en base de datos, no con un `if` en el
 código (§4).
 
+### 1.6 `cuota_milesimas` (congelada) y `cuota_efectiva_milesimas` (liquidada) no son lo mismo
+
+`tickets.cuota_milesimas` se calcula **al aceptar**, asumiendo que todas las
+patas ganan — es la cuota que fija `payout_pot_cent` y la exposición
+(`LIMITES.md` §4). `cuota_efectiva_milesimas` se calcula **al liquidar**
+(`REGLAS_LIQUIDACION.md` §7.1) y puede ser **menor** si alguna pata quedó nula
+(aporta 1,000 en vez de su cuota real). Son iguales cuando no hay patas nulas.
+No se persiste `cuota_efectiva_milesimas` en `tickets` — es el resultado de
+`core/liquidacion_tickets.py`, no un dato de aceptación.
+
 ---
 
 ## 2. DDL
