@@ -1,0 +1,51 @@
+{
+  "count": 4,
+  "items": [
+    {
+      "id": 738767054,
+      "sportId": 1,
+      "champId": 2664249,
+      "champName": "Australia. NPL Victoria",
+      "opp1": "Green Gully",
+      "opp2": "Dandenong City (Melbourne)",
+      "opp1Ids": [14173],
+      "opp2Ids": [48273],
+      "score": "0:0 (0:0,0:0)",
+      "dopInfo": "",
+      "_caso": "partido_real"
+    },
+    {
+      "id": 737967386,
+      "sportId": 1,
+      "champId": 2664249,
+      "champName": "Australia. NPL Victoria",
+      "opp1": "Locales",
+      "opp1Ids": [1],
+      "opp2Ids": [2],
+      "dopInfo": "5 Partidos",
+      "_caso": "agregado_de_liga"
+    },
+    {
+      "id": 738796443,
+      "sportId": 1,
+      "champId": 2664249,
+      "champName": "Australia. NPL Victoria",
+      "opp1": "Preston Lions/Oakleigh Cannons",
+      "opp1Ids": [2001, 2002],
+      "opp2Ids": [3001],
+      "dopInfo": "",
+      "_caso": "combinado_2_equipos"
+    },
+    {
+      "id": 738769319,
+      "sportId": 1,
+      "champId": 2664249,
+      "champName": "Australia. NPL Victoria",
+      "opp1": "FC Heidelberg/St Albans/Green Gully",
+      "opp1Ids": [4001, 4002, 4003],
+      "opp2Ids": [5001],
+      "dopInfo": "",
+      "_caso": "combinado_3_equipos"
+    }
+  ]
+}
