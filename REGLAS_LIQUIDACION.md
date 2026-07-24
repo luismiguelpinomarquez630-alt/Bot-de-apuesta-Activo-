@@ -308,9 +308,15 @@ def resolver_combinada(patas) -> tuple[EstadoSeleccion, Decimal]:
     # Solo quedan GANADA y NULA.
     # Una pata NULA aporta cuota 1.00: no suma, pero tampoco anula el ticket.
     cuota = Decimal(1)
+    hay_ganada = False
     for p in patas:
         if p.estado == EstadoSeleccion.GANADA:
+            hay_ganada = True
             cuota *= p.cuota
+
+    if not hay_ganada:
+        return EstadoSeleccion.NULA, cuota  # TODAS nulas: cuota 1.00, se devuelve el stake
+
     return EstadoSeleccion.GANADA, cuota
 ```
 
@@ -332,7 +338,14 @@ PENDIENTE, pero no le gana a REQUIERE_ADMIN.
 
 ### Caso extremo: todas las patas NULAS
 
-`cuota = 1.00` → se devuelve el stake íntegro. Correcto y esperado.
+`cuota = 1.00` → se devuelve el stake íntegro. **El estado del ticket es NULA
+(push), no GANADA.** Una versión anterior de este documento decía GANADA —
+era incorrecta: dejaba el estado NULA como valor muerto y haría que el
+llamador escriba un movimiento `payout` donde corresponde `devolucion`
+(`ESQUEMA_DB.md` §4) para exactamente este caso. Si al menos una pata es
+GANADA (aunque el resto sean NULAS), el ticket sigue siendo GANADA, con la
+cuota reducida por no contar las nulas — solo el caso de **todas** nulas es
+NULA.
 
 ---
 

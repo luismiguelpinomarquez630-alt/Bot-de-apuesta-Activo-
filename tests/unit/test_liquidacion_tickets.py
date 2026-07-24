@@ -44,7 +44,7 @@ def test_una_nula_resto_ganadas_producto_sin_la_nula():
 def test_todas_nulas_cuota_1000_devuelve_el_stake():
     patas = [_pata(NULA, 1234), _pata(NULA, 5678)]
     resultado = resolver_ticket(patas, stake_cent=5000)
-    assert resultado.estado == EstadoTicket.GANADO
+    assert resultado.estado == EstadoTicket.NULO
     assert resultado.cuota_efectiva_milesimas == 1000
     assert resultado.payout_cent == 5000  # el stake íntegro, exacto
 
@@ -71,7 +71,16 @@ def test_una_requiere_admin_requiere_admin():
 def test_todas_nulas_payout_exacto_igual_al_stake():
     patas = [_pata(NULA), _pata(NULA), _pata(NULA)]
     resultado = resolver_ticket(patas, stake_cent=123456)
+    assert resultado.estado == EstadoTicket.NULO
     assert resultado.payout_cent == 123456
+
+
+def test_ticket_una_sola_pata_nula_es_nulo():
+    patas = [_pata(NULA, 1788)]
+    resultado = resolver_ticket(patas, stake_cent=50000)
+    assert resultado.estado == EstadoTicket.NULO
+    assert resultado.cuota_efectiva_milesimas == 1000
+    assert resultado.payout_cent == 50000
 
 
 def test_una_nula_tres_ganadas_producto_sin_la_nula():

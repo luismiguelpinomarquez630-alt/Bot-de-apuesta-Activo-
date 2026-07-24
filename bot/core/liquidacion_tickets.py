@@ -49,10 +49,11 @@ def resolver_ticket(patas: list[PataResuelta], stake_cent: int) -> TicketResuelt
 
     Orden de precedencia (REGLAS_LIQUIDACION §6), el primero que dispara gana:
 
-        1. alguna REQUIERE_ADMIN → REQUIERE_ADMIN
-        2. alguna PERDIDA        → PERDIDO
-        3. alguna PENDIENTE      → PENDIENTE
-        4. resto (GANADA/NULA)   → GANADO
+        1. alguna REQUIERE_ADMIN            → REQUIERE_ADMIN
+        2. alguna PERDIDA                   → PERDIDO
+        3. alguna PENDIENTE                  → PENDIENTE
+        4. resto, ninguna GANADA (todas NULA) → NULO
+        5. resto, al menos una GANADA         → GANADO
 
     PERDIDA le gana a PENDIENTE: una pata perdida condena el ticket
     matemáticamente, ninguna pata pendiente puede revertirlo, y esperarla solo
@@ -62,8 +63,23 @@ def resolver_ticket(patas: list[PataResuelta], stake_cent: int) -> TicketResuelt
     el dato de origen está mal, "perdida" también podría estarlo. Una espera
     normal (PENDIENTE) no tiene ese riesgo.
 
-    En los tres casos que no son GANADO, `cuota_efectiva_milesimas` y
-    `payout_cent` son 0: todavía no hay nada que pagar.
+    ⚠️ TODAS las patas NULA → NULO, no GANADO. Una especificación anterior
+    decía GANADO; era incorrecta porque dejaba `EstadoTicket.NULO` como valor
+    muerto y llevaba al llamador a escribir un movimiento `payout` donde
+    `ESQUEMA_DB.md` (tabla `movimientos`, columna `tipo`) tiene `devolucion`
+    para exactamente este caso. Si hay al menos una pata GANADA (aunque el
+    resto sean NULA), el ticket sigue siendo GANADO, solo con la cuota
+    reducida por no contar las nulas.
+
+    Movimiento que corresponde a cada estado final (`ESQUEMA_DB.md` §4):
+        GANADO → `payout`
+        NULO   → `devolucion`
+        (PERDIDO, PENDIENTE, REQUIERE_ADMIN no generan movimiento todavía)
+
+    En los estados que no son GANADO ni NULO, `cuota_efectiva_milesimas` y
+    `payout_cent` son 0: todavía no hay nada que pagar. En NULO,
+    `cuota_efectiva_milesimas` es 1000 y `payout_cent` es exactamente
+    `stake_cent` (se devuelve el stake íntegro).
 
     Lista de patas vacía → ValueError (un ticket sin patas es un bug del
     llamador, no un caso de negocio).
@@ -85,8 +101,10 @@ def resolver_ticket(patas: list[PataResuelta], stake_cent: int) -> TicketResuelt
     # Solo quedan GANADA y NULA. Una pata NULA aporta cuota 1.000: no suma,
     # pero tampoco anula el ticket (REGLAS_LIQUIDACION §6).
     producto = Decimal(1)
+    hay_ganada = False
     for p in patas:
         if p.estado == EstadoSeleccion.GANADA:
+            hay_ganada = True
             producto *= Decimal(p.cuota_milesimas) / MIL
 
     cuota_efectiva_milesimas = int((producto * MIL).to_integral_value(ROUND_HALF_UP))
@@ -95,4 +113,5 @@ def resolver_ticket(patas: list[PataResuelta], stake_cent: int) -> TicketResuelt
             ROUND_HALF_UP
         )
     )
-    return TicketResuelto(EstadoTicket.GANADO, cuota_efectiva_milesimas, payout_cent)
+    estado = EstadoTicket.GANADO if hay_ganada else EstadoTicket.NULO
+    return TicketResuelto(estado, cuota_efectiva_milesimas, payout_cent)
