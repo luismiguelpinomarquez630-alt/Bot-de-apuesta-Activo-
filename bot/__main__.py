@@ -130,13 +130,11 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
 
 # === DIAGNOSTICO TEMPORAL - QUITAR ===
 async def _diagnostico_temporal() -> None:
-    """Desechable: el intento anterior contra `LineFeed/Get1x2_VZip` dio
-    ReadTimeout a los 5s — no es bloqueo (un 403 respondería rápido), así
-    que hay que aislar si es lentitud o volumen. Prueba con timeout de 20s
-    y count bajo (menos volumen) contra `Get1x2_VZip`, y en paralelo pide
-    `WebGetTopChampsZip` (el endpoint que YA sabemos que responde rápido)
-    como control de tiempos. Mide cada request con `time.monotonic()` y
-    loguea status + duración + primeros 200 chars. Borrar esta función y su
+    """Desechable: `LineFeed/Get1x2_VZip` da 502 en provider — ese endpoint
+    no existe ahí. Provider sirve `LiveFeed` y `result`, pero no `LineFeed`.
+    Hay que descubrir por qué endpoint sirve las cuotas. Prueba 3
+    candidatos (todos con `gr=413`/`country=94`, timeout 20s) a ver cuál
+    responde 200 con el sobre `{Success, Value}`. Borrar esta función y su
     llamada en main_async una vez leídos los logs de Railway.
 
     ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
@@ -149,15 +147,19 @@ async def _diagnostico_temporal() -> None:
 
         urls = [
             (
-                "Get1x2_VZip count=10 sports=1 (gr=413, country=94)",
-                "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
-                "?sports=1&count=10&lng=es&cfview=2&mode=4&country=94&partner=156"
-                "&virtualSports=false&gr=413",
+                "LiveFeed Get1x2_VZip (LiveFeed en vez de LineFeed)",
+                "https://provider.betfantasy.bet/service-api/LiveFeed/Get1x2_VZip"
+                "?sports=1&count=10&lng=es&cfview=2&mode=4&country=94&partner=156&gr=413",
             ),
             (
-                "WebGetTopChampsZip (control, ya sabemos que responde)",
-                "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip"
-                "?lng=es&gr=413&country=94",
+                "LiveFeed GetChampZip (cuotas por liga)",
+                "https://provider.betfantasy.bet/service-api/LiveFeed/GetChampZip"
+                "?lng=es&gr=413&country=94&sports=1&count=10",
+            ),
+            (
+                "LiveFeed GetTopGamesStatZip (feed de eventos de las capturas iniciales)",
+                "https://provider.betfantasy.bet/service-api/LiveFeed/GetTopGamesStatZip"
+                "?lng=es&gr=413&country=94&sports=1&count=10",
             ),
         ]
 
