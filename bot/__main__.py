@@ -133,38 +133,50 @@ async def _diagnostico_temporal() -> None:
     """Desechable: aisla si el 403 contra proveedores de datos es por
     bloqueo de IP/ASN de Railway. Loguea la IP de salida y el resultado de
     3 URLs de prueba. Borrar esta función y su llamada en main_async una
-    vez leídos los logs de Railway."""
-    import httpx
+    vez leídos los logs de Railway.
 
-    urls = [
-        (
-            "LiveFeed WebGetTopChampsZip",
-            "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip"
-            "?lng=es&gr=413&country=94",
-        ),
-        (
-            "results/provider/leagues games",
-            "https://betfantasy.bet/api/results/provider/leagues/30237/games"
-            "?dateFrom=1784883600&dateTo=1784970000",
-        ),
-        ("api.betfantasy.bet raiz", "https://api.betfantasy.bet/"),
-    ]
+    ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
+    un try/except Exception amplio (no solo httpx.HTTPError) que loguea y
+    sigue — si un host cuelga o el diagnóstico mismo tiene un bug, el
+    scheduler tiene que arrancar igual. Timeout corto (5s) por request para
+    que un host que no responde no sume 15s de espera por URL.
+    """
+    try:
+        import httpx
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            ip_resp = await client.get("https://api.ipify.org")
-            _logger.warning("DIAGNOSTICO: IP de salida = %s", ip_resp.text.strip())
-        except httpx.HTTPError as exc:
-            _logger.warning("DIAGNOSTICO: fallo al consultar IP de salida: %r", exc)
+        urls = [
+            (
+                "LiveFeed WebGetTopChampsZip",
+                "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip"
+                "?lng=es&gr=413&country=94",
+            ),
+            (
+                "results/provider/leagues games",
+                "https://betfantasy.bet/api/results/provider/leagues/30237/games"
+                "?dateFrom=1784883600&dateTo=1784970000",
+            ),
+            ("api.betfantasy.bet raiz", "https://api.betfantasy.bet/"),
+        ]
 
-        for nombre, url in urls:
+        async with httpx.AsyncClient(timeout=5) as client:
             try:
-                resp = await client.get(url)
-                _logger.warning(
-                    "DIAGNOSTICO: %s -> status=%s body[:200]=%r", nombre, resp.status_code, resp.text[:200]
-                )
-            except httpx.HTTPError as exc:
-                _logger.warning("DIAGNOSTICO: %s -> error de transporte: %r", nombre, exc)
+                ip_resp = await client.get("https://api.ipify.org")
+                _logger.warning("DIAGNOSTICO: IP de salida = %s", ip_resp.text.strip())
+            except Exception as exc:
+                _logger.warning("DIAGNOSTICO: fallo al consultar IP de salida: %r", exc)
+
+            for nombre, url in urls:
+                try:
+                    resp = await client.get(url)
+                    _logger.warning(
+                        "DIAGNOSTICO: %s -> status=%s body[:200]=%r", nombre, resp.status_code, resp.text[:200]
+                    )
+                except Exception as exc:
+                    _logger.warning("DIAGNOSTICO: %s -> error de transporte: %r", nombre, exc)
+    except Exception:
+        # Paraguas final: cualquier fallo no anticipado (import, construcción
+        # del cliente, lo que sea) se loguea acá y el arranque sigue.
+        _logger.exception("DIAGNOSTICO: el bloque temporal falló entero, se ignora")
 # === FIN DIAGNOSTICO TEMPORAL ===
 
 
