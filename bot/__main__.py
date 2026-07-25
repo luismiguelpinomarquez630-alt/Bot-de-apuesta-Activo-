@@ -128,6 +128,46 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
     return scheduler
 
 
+# === DIAGNOSTICO TEMPORAL - QUITAR ===
+async def _diagnostico_temporal() -> None:
+    """Desechable: aisla si el 403 contra proveedores de datos es por
+    bloqueo de IP/ASN de Railway. Loguea la IP de salida y el resultado de
+    3 URLs de prueba. Borrar esta función y su llamada en main_async una
+    vez leídos los logs de Railway."""
+    import httpx
+
+    urls = [
+        (
+            "LiveFeed WebGetTopChampsZip",
+            "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip"
+            "?lng=es&gr=413&country=94",
+        ),
+        (
+            "results/provider/leagues games",
+            "https://betfantasy.bet/api/results/provider/leagues/30237/games"
+            "?dateFrom=1784883600&dateTo=1784970000",
+        ),
+        ("api.betfantasy.bet raiz", "https://api.betfantasy.bet/"),
+    ]
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            ip_resp = await client.get("https://api.ipify.org")
+            _logger.warning("DIAGNOSTICO: IP de salida = %s", ip_resp.text.strip())
+        except httpx.HTTPError as exc:
+            _logger.warning("DIAGNOSTICO: fallo al consultar IP de salida: %r", exc)
+
+        for nombre, url in urls:
+            try:
+                resp = await client.get(url)
+                _logger.warning(
+                    "DIAGNOSTICO: %s -> status=%s body[:200]=%r", nombre, resp.status_code, resp.text[:200]
+                )
+            except httpx.HTTPError as exc:
+                _logger.warning("DIAGNOSTICO: %s -> error de transporte: %r", nombre, exc)
+# === FIN DIAGNOSTICO TEMPORAL ===
+
+
 async def main_async(config: Config, detener: asyncio.Event | None = None) -> None:
     """`ARRANQUE_TS` de `settlement_engine` (su guarda de arranque) se
     captura al importar ese módulo, arriba de este archivo — antes de que
@@ -137,6 +177,10 @@ async def main_async(config: Config, detener: asyncio.Event | None = None) -> No
     `detener`: si se pasa (tests), se usa tal cual en vez de instalar
     handlers de señal — permite disparar el apagado sin tocar señales de
     verdad."""
+    # === DIAGNOSTICO TEMPORAL - QUITAR ===
+    await _diagnostico_temporal()
+    # === FIN DIAGNOSTICO TEMPORAL ===
+
     conn_arranque = _abrir_conexion(config.db_path)
     aplicar_migraciones(conn_arranque)
     conn_arranque.close()
