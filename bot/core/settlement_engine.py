@@ -12,10 +12,10 @@ esos tickets se marcan y quedan para revisión humana, nunca se pagan solos.
 import sqlite3
 import time
 from dataclasses import dataclass
-from decimal import Decimal
 
 from bot.core.liquidacion_tickets import EstadoTicket, PataResuelta, resolver_ticket
 from bot.core.resolucion_mercados import EstadoSeleccion, Marcador, resolver
+from bot.dominio.mercados import centesimas_a_linea
 from bot.fuente_resultados import cascada_fuentes
 from bot.fuente_resultados.primaria import cliente_1x
 
@@ -103,7 +103,7 @@ async def _evaluar_seleccion(
         visitante=marcador_parseado["visitante"],
         periodos_raw=marcador_parseado["periodos_raw"],
     )
-    parametro = Decimal(parametro_centesimas) / 100 if parametro_centesimas is not None else None
+    parametro = centesimas_a_linea(parametro_centesimas) if parametro_centesimas is not None else None
     estado_pata = resolver(market_type, parametro, m)
     return _SeleccionEvaluada(seleccion_id, estado_pata, resultado_eval.marcador_raw, cuota_milesimas)
 
