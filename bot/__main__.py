@@ -130,32 +130,38 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
 
 # === DIAGNOSTICO TEMPORAL - QUITAR ===
 async def _diagnostico_temporal() -> None:
-    """Desechable: confirma el endpoint EXACTO de cuotas que usa el bot
-    (`LineFeed/Get1x2_VZip`, no `WebGetTopChampsZip`, que fue el que se
-    probó en el diagnóstico anterior) contra `provider.betfantasy.bet`, con
-    sus parámetros de operador (`gr=413`, `country=94`). Loguea la IP de
-    salida y el resultado. Borrar esta función y su llamada en main_async
-    una vez leídos los logs de Railway.
+    """Desechable: el intento anterior contra `LineFeed/Get1x2_VZip` dio
+    ReadTimeout a los 5s — no es bloqueo (un 403 respondería rápido), así
+    que hay que aislar si es lentitud o volumen. Prueba con timeout de 20s
+    y count bajo (menos volumen) contra `Get1x2_VZip`, y en paralelo pide
+    `WebGetTopChampsZip` (el endpoint que YA sabemos que responde rápido)
+    como control de tiempos. Mide cada request con `time.monotonic()` y
+    loguea status + duración + primeros 200 chars. Borrar esta función y su
+    llamada en main_async una vez leídos los logs de Railway.
 
     ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
     un try/except Exception amplio (no solo httpx.HTTPError) que loguea y
     sigue — si un host cuelga o el diagnóstico mismo tiene un bug, el
-    scheduler tiene que arrancar igual. Timeout corto (5s) por request para
-    que un host que no responde no sume 15s de espera por URL.
+    scheduler tiene que arrancar igual.
     """
     try:
         import httpx
 
         urls = [
             (
-                "LineFeed Get1x2_VZip (gr=413, country=94)",
+                "Get1x2_VZip count=10 sports=1 (gr=413, country=94)",
                 "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
-                "?sports=1&count=5&lng=es&cfview=2&mode=4&country=94&partner=156"
+                "?sports=1&count=10&lng=es&cfview=2&mode=4&country=94&partner=156"
                 "&virtualSports=false&gr=413",
+            ),
+            (
+                "WebGetTopChampsZip (control, ya sabemos que responde)",
+                "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip"
+                "?lng=es&gr=413&country=94",
             ),
         ]
 
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             try:
                 ip_resp = await client.get("https://api.ipify.org")
                 _logger.warning("DIAGNOSTICO: IP de salida = %s", ip_resp.text.strip())
@@ -163,13 +169,22 @@ async def _diagnostico_temporal() -> None:
                 _logger.warning("DIAGNOSTICO: fallo al consultar IP de salida: %r", exc)
 
             for nombre, url in urls:
+                inicio = time.monotonic()
                 try:
                     resp = await client.get(url)
+                    duracion_s = time.monotonic() - inicio
                     _logger.warning(
-                        "DIAGNOSTICO: %s -> status=%s body[:200]=%r", nombre, resp.status_code, resp.text[:200]
+                        "DIAGNOSTICO: %s -> status=%s duracion=%.2fs body[:200]=%r",
+                        nombre,
+                        resp.status_code,
+                        duracion_s,
+                        resp.text[:200],
                     )
                 except Exception as exc:
-                    _logger.warning("DIAGNOSTICO: %s -> error de transporte: %r", nombre, exc)
+                    duracion_s = time.monotonic() - inicio
+                    _logger.warning(
+                        "DIAGNOSTICO: %s -> error de transporte tras %.2fs: %r", nombre, duracion_s, exc
+                    )
     except Exception:
         # Paraguas final: cualquier fallo no anticipado (import, construcción
         # del cliente, lo que sea) se loguea acá y el arranque sigue.
