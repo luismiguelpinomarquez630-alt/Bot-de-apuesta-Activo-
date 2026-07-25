@@ -130,10 +130,11 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
 
 # === DIAGNOSTICO TEMPORAL - QUITAR ===
 async def _diagnostico_temporal() -> None:
-    """Desechable: aisla si el 403 contra proveedores de datos es por
-    bloqueo de IP/ASN de Railway. Loguea la IP de salida y el resultado de
-    3 URLs de prueba. Borrar esta función y su llamada en main_async una
-    vez leídos los logs de Railway.
+    """Desechable: confirma si `provider.betfantasy.bet` también sirve
+    resultados por el path de 1x (`/service-api/result/...`), no solo
+    cuotas. Loguea la IP de salida y el resultado de 2 URLs de prueba.
+    Borrar esta función y su llamada en main_async una vez leídos los logs
+    de Railway.
 
     ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
     un try/except Exception amplio (no solo httpx.HTTPError) que loguea y
@@ -146,16 +147,15 @@ async def _diagnostico_temporal() -> None:
 
         urls = [
             (
-                "LiveFeed WebGetTopChampsZip",
-                "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip"
-                "?lng=es&gr=413&country=94",
+                "result v2/champs",
+                "https://provider.betfantasy.bet/service-api/result/web/api/v2/champs"
+                "?dateFrom=1784880000&dateTo=1784966400&lng=es&ref=156&sportIds=1",
             ),
             (
-                "results/provider/leagues games",
-                "https://betfantasy.bet/api/results/provider/leagues/30237/games"
-                "?dateFrom=1784883600&dateTo=1784970000",
+                "result v3/games",
+                "https://provider.betfantasy.bet/service-api/result/web/api/v3/games"
+                "?champId=2664249&dateFrom=1784880000&dateTo=1784966400&lng=es&ref=156",
             ),
-            ("api.betfantasy.bet raiz", "https://api.betfantasy.bet/"),
         ]
 
         async with httpx.AsyncClient(timeout=5) as client:
