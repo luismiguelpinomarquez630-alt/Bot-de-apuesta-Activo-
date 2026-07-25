@@ -130,11 +130,12 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
 
 # === DIAGNOSTICO TEMPORAL - QUITAR ===
 async def _diagnostico_temporal() -> None:
-    """Desechable: confirma si `provider.betfantasy.bet` también sirve
-    resultados por el path de 1x (`/service-api/result/...`), no solo
-    cuotas. Loguea la IP de salida y el resultado de 2 URLs de prueba.
-    Borrar esta función y su llamada en main_async una vez leídos los logs
-    de Railway.
+    """Desechable: confirma el endpoint EXACTO de cuotas que usa el bot
+    (`LineFeed/Get1x2_VZip`, no `WebGetTopChampsZip`, que fue el que se
+    probó en el diagnóstico anterior) contra `provider.betfantasy.bet`, con
+    sus parámetros de operador (`gr=413`, `country=94`). Loguea la IP de
+    salida y el resultado. Borrar esta función y su llamada en main_async
+    una vez leídos los logs de Railway.
 
     ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
     un try/except Exception amplio (no solo httpx.HTTPError) que loguea y
@@ -147,14 +148,10 @@ async def _diagnostico_temporal() -> None:
 
         urls = [
             (
-                "result v2/champs",
-                "https://provider.betfantasy.bet/service-api/result/web/api/v2/champs"
-                "?dateFrom=1784880000&dateTo=1784966400&lng=es&ref=156&sportIds=1",
-            ),
-            (
-                "result v3/games",
-                "https://provider.betfantasy.bet/service-api/result/web/api/v3/games"
-                "?champId=2664249&dateFrom=1784880000&dateTo=1784966400&lng=es&ref=156",
+                "LineFeed Get1x2_VZip (gr=413, country=94)",
+                "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
+                "?sports=1&count=5&lng=es&cfview=2&mode=4&country=94&partner=156"
+                "&virtualSports=false&gr=413",
             ),
         ]
 
