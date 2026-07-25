@@ -104,7 +104,7 @@ Sin el parámetro en la clave, uno pisa al otro.
 ## 6. TTL y frescura
 
 ```python
-TTL_S = 30                 # decidido
+TTL_S = 90                 # revisado: ver nota de ESPECIFICACION_FUENTE §0
 ```
 
 Una `CuotaVigente` se considera **fresca** si:
@@ -118,8 +118,11 @@ ahora_ts - cuota.capturada_ts <= TTL_S
 anterior (§7), las cuotas siguen envejeciendo desde su captura real. No se
 "rejuvenecen" por el intento de refresco.
 
-30 s es punto de partida. Prepartido tolera bien ese rango; bajarlo aumenta
-carga sobre la API sin ganancia real mientras no haya live.
+⚠️ **Revisado de 30s a 90s.** `Get1x2_VZip` contra la fuente real de
+producción (`provider.betfantasy.bet`, ESPECIFICACION_FUENTE §0) tarda
+4-10s y pesa 100+KB — bastante más que 1x. El TTL tiene que quedar
+cómodamente por encima del intervalo de refresco (§7, ahora 45s) para que
+un ciclo lento no deje el snapshot vencido antes del siguiente refresco.
 
 ---
 
@@ -133,9 +136,14 @@ async def refrescar(sport_id: int, count: int, ahora_ts: int) -> None:
     No se sirve nada como si fuera fresco."""
 ```
 
-Quién lo dispara: un job de APScheduler cada ~15–20 s (menos que el TTL, para
-que casi siempre haya snapshot fresco). Esto vive en la capa de orquestación
-(`__main__` / scheduler), no dentro de este módulo.
+Quién lo dispara: un job de APScheduler cada 45s (`INTERVALO_REFRESCO_S`,
+menos que el TTL de 90s, para que casi siempre haya snapshot fresco). Esto
+vive en la capa de orquestación (`__main__` / scheduler), no dentro de este
+módulo.
+
+⚠️ **Revisado de 15s a 45s.** Con `Get1x2_VZip` tardando 4-10s contra la
+fuente real (§6), refrescar cada 15s solapaba corridas. 45s deja margen de
+sobra sin acercarse al TTL.
 
 ⚠️ **`AsyncIOScheduler`, no `BackgroundScheduler`.** El cliente httpx está atado
 al event loop; un scheduler en hilos con su propio loop rompe (ya anotado en
@@ -234,9 +242,11 @@ que tocó.
 | # | Decisión | Afecta |
 |---|---|---|
 | 1 | Si la cuota mejora, ¿se sella a la nueva o a la vista? | §9. Sellar a la vista es más simple y nunca perjudica al bot |
-| 2 | TTL definitivo (30 s propuesto) | §6 |
-| 3 | Intervalo del job de refresco (15–20 s propuesto) | §7 |
-| 4 | ¿Una tolerancia de cambio que reconfirme solo si el movimiento supera un umbral, o reconfirmar ante cualquier baja? | §9, UX |
+| 2 | ¿Una tolerancia de cambio que reconfirme solo si el movimiento supera un umbral, o reconfirmar ante cualquier baja? | §9, UX |
+
+TTL (§6, 90s) e intervalo de refresco (§7, 45s) ya no están pendientes:
+revisados contra los tiempos reales de `provider.betfantasy.bet`
+(ESPECIFICACION_FUENTE §0).
 
 Recomendación para #1: **sellar a la cuota vista** cuando mejora. Nunca
 perjudica al bot (sella más barato de lo que podría), y evita explicarle al

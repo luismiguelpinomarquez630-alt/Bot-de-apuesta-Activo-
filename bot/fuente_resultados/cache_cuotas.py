@@ -18,8 +18,8 @@ from decimal import Decimal
 
 from bot.fuente_resultados.primaria import cliente_1x
 
-TTL_S = 30
-INTERVALO_REFRESCO_S = 15
+TTL_S = 90  # CACHE_CUOTAS.md §6: Get1x2_VZip contra la fuente real tarda 4-10s
+INTERVALO_REFRESCO_S = 45  # CACHE_CUOTAS.md §7: < TTL, sin solapar corridas lentas
 UMBRAL_BAJA = Decimal("0.02")
 
 _logger = logging.getLogger(__name__)

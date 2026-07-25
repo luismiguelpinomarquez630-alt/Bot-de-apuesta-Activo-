@@ -52,12 +52,7 @@ def test_arranque_migra_y_apagado_cierra_cliente(tmp_path):
     detener = asyncio.Event()
     detener.set()  # ya "señalado": main_async debe pasar de largo a apagar
 
-    # bot_main._diagnostico_temporal hace requests reales (bloque temporal
-    # de diagnóstico de infraestructura, ver bot/__main__.py) — mockeado acá
-    # para no romper la regla de "sin red" en los tests.
-    with patch.object(cliente_1x, "cerrar_cliente") as mock_cerrar, patch.object(
-        bot_main, "_diagnostico_temporal", return_value=None
-    ):
+    with patch.object(cliente_1x, "cerrar_cliente") as mock_cerrar:
         _run(bot_main.main_async(config, detener=detener))
 
     mock_cerrar.assert_called_once()

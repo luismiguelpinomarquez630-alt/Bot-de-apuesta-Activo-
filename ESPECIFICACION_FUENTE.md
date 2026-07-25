@@ -15,6 +15,54 @@ Contrato de la fuente de datos para `bot/fuente_resultados/`.
 
 ---
 
+## 0. Fuente de producción ✅
+
+⚠️ **`bol.1xbet.com` NO sirve desde datacenter.** Devuelve 403 a las
+peticiones que salen de Railway, aunque el mismo endpoint responde 200 desde
+un navegador en Cuba — es un bloqueo por IP/ASN del lado de 1x, no un
+problema de parámetros ni de headers. Verificado con un diagnóstico
+temporal corrido en Railway (PRs #18-#22, ya revertido).
+
+**Fuente real de producción: `https://provider.betfantasy.bet`.**
+
+| Concepto | Valor |
+|---|---|
+| Responde 200 desde datacenter | ✅ Verificado en Railway |
+| Autenticación | ✅ Ninguna, igual que `bol.1xbet.com` |
+| Formato de respuesta | ✅ Idéntico a 1x: sobre `{Success, Value}` en `LineFeed/*Zip`, esquema `_VZip` (§7: `I`, `E[]`, `T`, `C`, `CV`, `P`, `G`, `CE`), `count`/`items` en los endpoints de `/result/` |
+| Resultados (`v2/champs`, `v3/games`) | ✅ Mismos parámetros que 1x: `lng=es`, `ref=156` (sin `country`/`gr`) |
+| Cuotas (`LineFeed/Get1x2_VZip`) | ✅ Verificado contra la app real de betfantasy (Network): `lng=es`, `cfview=2`, `mode=4`, `country=94`, `gr=413` — **`country`/`gr` son los de provider, NO los de 1x (97/687)**. `partner=156` ❌ sin verificar, ver nota abajo |
+
+⚠️ **`Get1x2_VZip` es lento y pesado contra provider: 4-10s, 100+KB.** Con
+`sports` filtrado (un solo deporte) baja a la mitad: 52KB/2.44s medido,
+contra 128KB/4.25s sin filtrar. Consecuencias, ya aplicadas:
+
+- `cliente_1x.TIMEOUT_S` subido de 10s a 30s — con 10s el timeout llegaba
+  antes que la respuesta y salía como 502 en el llamador.
+- `cliente_1x.obtener_cuotas()` **siempre** filtra por `sports`, nunca pide
+  el feed completo sin filtrar.
+- `cache_cuotas.INTERVALO_REFRESCO_S` subido de 15s a 45s y
+  `cache_cuotas.TTL_S` de 30s a 90s (`CACHE_CUOTAS.md §6-§7`), para que un
+  ciclo lento no solape con el siguiente ni deje el snapshot vencido.
+
+`bol.1xbet.com` queda como referencia de formato y de la ingeniería inversa
+original (§1 en adelante la sigue documentando), pero el cliente
+(`bot/fuente_resultados/primaria/cliente_1x.py`) apunta a `provider.betfantasy.bet`.
+
+❌ **No verificado: `partner=156` para CUOTAS.** Se dedujo por analogía con
+`ref=156`, que sí está verificado pero para RESULTADOS — un endpoint
+distinto. Si `provider` ignora `partner` o espera otro valor para
+`Get1x2_VZip`, la respuesta puede volver `Success:true` con `Value` vacío o
+con partidos de otra región, **sin ningún error** que lo delate.
+
+⚠️ **Primera verificación obligatoria al desplegar la fuente real:**
+confirmar en los logs que el refresco de cuotas trae `Value` no vacío, con
+partidos de `country=94`. Si viene vacío (o con datos de otra región) pero
+`Success:true`, el problema es `partner`/`gr` mal configurados — no un fallo
+de código, y no lo va a mostrar ningún traceback.
+
+---
+
 ## 1. Host y autenticación
 
 | Concepto | Valor |

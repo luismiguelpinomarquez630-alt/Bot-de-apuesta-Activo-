@@ -128,72 +128,6 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
     return scheduler
 
 
-# === DIAGNOSTICO TEMPORAL - QUITAR ===
-async def _diagnostico_temporal() -> None:
-    """Desechable: `LineFeed/Get1x2_VZip` da 502 en provider — ese endpoint
-    no existe ahí. Provider sirve `LiveFeed` y `result`, pero no `LineFeed`.
-    Hay que descubrir por qué endpoint sirve las cuotas. Prueba 3
-    candidatos (todos con `gr=413`/`country=94`, timeout 20s) a ver cuál
-    responde 200 con el sobre `{Success, Value}`. Borrar esta función y su
-    llamada en main_async una vez leídos los logs de Railway.
-
-    ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
-    un try/except Exception amplio (no solo httpx.HTTPError) que loguea y
-    sigue — si un host cuelga o el diagnóstico mismo tiene un bug, el
-    scheduler tiene que arrancar igual.
-    """
-    try:
-        import httpx
-
-        urls = [
-            (
-                "LiveFeed Get1x2_VZip (LiveFeed en vez de LineFeed)",
-                "https://provider.betfantasy.bet/service-api/LiveFeed/Get1x2_VZip"
-                "?sports=1&count=10&lng=es&cfview=2&mode=4&country=94&partner=156&gr=413",
-            ),
-            (
-                "LiveFeed GetChampZip (cuotas por liga)",
-                "https://provider.betfantasy.bet/service-api/LiveFeed/GetChampZip"
-                "?lng=es&gr=413&country=94&sports=1&count=10",
-            ),
-            (
-                "LiveFeed GetTopGamesStatZip (feed de eventos de las capturas iniciales)",
-                "https://provider.betfantasy.bet/service-api/LiveFeed/GetTopGamesStatZip"
-                "?lng=es&gr=413&country=94&sports=1&count=10",
-            ),
-        ]
-
-        async with httpx.AsyncClient(timeout=20) as client:
-            try:
-                ip_resp = await client.get("https://api.ipify.org")
-                _logger.warning("DIAGNOSTICO: IP de salida = %s", ip_resp.text.strip())
-            except Exception as exc:
-                _logger.warning("DIAGNOSTICO: fallo al consultar IP de salida: %r", exc)
-
-            for nombre, url in urls:
-                inicio = time.monotonic()
-                try:
-                    resp = await client.get(url)
-                    duracion_s = time.monotonic() - inicio
-                    _logger.warning(
-                        "DIAGNOSTICO: %s -> status=%s duracion=%.2fs body[:200]=%r",
-                        nombre,
-                        resp.status_code,
-                        duracion_s,
-                        resp.text[:200],
-                    )
-                except Exception as exc:
-                    duracion_s = time.monotonic() - inicio
-                    _logger.warning(
-                        "DIAGNOSTICO: %s -> error de transporte tras %.2fs: %r", nombre, duracion_s, exc
-                    )
-    except Exception:
-        # Paraguas final: cualquier fallo no anticipado (import, construcción
-        # del cliente, lo que sea) se loguea acá y el arranque sigue.
-        _logger.exception("DIAGNOSTICO: el bloque temporal falló entero, se ignora")
-# === FIN DIAGNOSTICO TEMPORAL ===
-
-
 async def main_async(config: Config, detener: asyncio.Event | None = None) -> None:
     """`ARRANQUE_TS` de `settlement_engine` (su guarda de arranque) se
     captura al importar ese módulo, arriba de este archivo — antes de que
@@ -203,10 +137,6 @@ async def main_async(config: Config, detener: asyncio.Event | None = None) -> No
     `detener`: si se pasa (tests), se usa tal cual en vez de instalar
     handlers de señal — permite disparar el apagado sin tocar señales de
     verdad."""
-    # === DIAGNOSTICO TEMPORAL - QUITAR ===
-    await _diagnostico_temporal()
-    # === FIN DIAGNOSTICO TEMPORAL ===
-
     conn_arranque = _abrir_conexion(config.db_path)
     aplicar_migraciones(conn_arranque)
     conn_arranque.close()
