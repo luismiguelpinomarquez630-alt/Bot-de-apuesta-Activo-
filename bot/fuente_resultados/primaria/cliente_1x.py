@@ -19,19 +19,27 @@ import httpx
 
 from bot.dominio.mercados import TIPOS_SOPORTADOS, linea_valida
 
-HOST = "https://bol.1xbet.com"
-REF = 156
+# bol.1xbet.com no sirve desde datacenter (403 por IP/ASN, verificado desde
+# Railway). provider.betfantasy.bet es la fuente real de producción: mismo
+# formato, sin auth, responde 200 desde datacenter (ESPECIFICACION_FUENTE §0).
+BASE_URL = "https://provider.betfantasy.bet"
+REF = 156  # resultados (`ref`) y cuotas (`partner`): 156 en ambos, verificado
 LNG = "es"
 
 VENTANA_MAX_S = 86400  # único tamaño de ventana verificado, ESPECIFICACION_FUENTE §2
-TIMEOUT_S = 10
+# Get1x2_VZip contra provider tarda 4-10s y pesa 100+KB (ESPECIFICACION_FUENTE
+# §0) — con 10s el timeout llegaba antes que la respuesta y salía como 502.
+TIMEOUT_S = 30
 REINTENTOS = 3
 BACKOFF_BASE_S = 1.0
 
-# Parámetros fijos de LineFeed/Get1x2_VZip, ESPECIFICACION_FUENTE §3.3.
+# Parámetros fijos de LineFeed/Get1x2_VZip contra provider.betfantasy.bet,
+# verificados desde la app real (ESPECIFICACION_FUENTE §0). country/gr son
+# los de provider, NO los de 1x (97/687).
 LINEFEED_CFVIEW = 2
 LINEFEED_MODE = 4
-LINEFEED_COUNTRY = 97
+LINEFEED_COUNTRY = 94
+LINEFEED_GR = 413
 
 _RX_SCORE = re.compile(r"^(\d+):(\d+)\s*(?:\(([^)]*)\))?$")
 
@@ -108,7 +116,7 @@ async def obtener_champs(sport_id: int, desde: int, hasta: int) -> list[dict]:
     hasta = alinear_ts(hasta)
     _validar_ventana(desde, hasta)
     data = await _get(
-        f"{HOST}/service-api/result/web/api/v2/champs",
+        f"{BASE_URL}/service-api/result/web/api/v2/champs",
         {
             "dateFrom": desde,
             "dateTo": hasta,
@@ -130,7 +138,7 @@ async def obtener_partidos(champ_id: int, desde: int, hasta: int) -> list[dict]:
     hasta = alinear_ts(hasta)
     _validar_ventana(desde, hasta)
     data = await _get(
-        f"{HOST}/service-api/result/web/api/v3/games",
+        f"{BASE_URL}/service-api/result/web/api/v3/games",
         {"champId": champ_id, "dateFrom": desde, "dateTo": hasta, "lng": LNG, "ref": REF},
     )
     return data.get("items", [])
@@ -227,15 +235,16 @@ async def obtener_cuotas(sport_id: int, count: int) -> list[EventoCuotas]:
     cientos de tipos, los que no sabemos liquidar no se ofrecen.
     """
     payload = await _get(
-        f"{HOST}/service-api/LineFeed/Get1x2_VZip",
+        f"{BASE_URL}/service-api/LineFeed/Get1x2_VZip",
         {
-            "sports": sport_id,
+            "sports": sport_id,  # SIEMPRE filtrado por deporte: reduce a la mitad tiempo/volumen
             "count": count,
             "lng": LNG,
             "cfview": LINEFEED_CFVIEW,
             "mode": LINEFEED_MODE,
             "country": LINEFEED_COUNTRY,
             "partner": REF,
+            "gr": LINEFEED_GR,
             "virtualSports": False,
         },
     )
