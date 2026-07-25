@@ -18,7 +18,7 @@ bot/
   telegram/          # CAPA 3 — interacción con el usuario (handlers, keyboards)
   core/               # CAPA 2 — motor de negocio (settlement_engine.py, apuestas.py)
   fuente_resultados/  # CAPA 1 — datos externos (cascada_fuentes.py, confianza.py)
-  dominio/            # CAPA 0 — catálogo de dominio puro (mercados.py)
+  dominio/            # CAPA 0 — catálogo de dominio puro (mercados.py, combinadas.py, tiempo.py)
   db/                 # modelos y migraciones
   observabilidad/     # alertas y healthcheck
 ```
@@ -58,6 +58,14 @@ bot/
    `fuente_resultados/`, ni de `telegram/`). Cualquier
    capa puede importar de `dominio/` — es la única
    dirección permitida.
+
+## Convención de tiempo
+
+Toda fecha de cara al usuario es hora de Cuba (`America/Havana`, vía
+`zoneinfo.ZoneInfo` — **nunca** un offset fijo: Cuba tiene DST). Todo
+timestamp interno es epoch UTC. La conversión entre ambos vive únicamente en
+`bot/dominio/tiempo.py` (`inicio_de_dia_habana()`); ningún otro módulo hace
+su propia aritmética de zona horaria.
 
 ## Reglas de liquidación
 
