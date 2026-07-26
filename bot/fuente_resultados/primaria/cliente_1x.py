@@ -34,7 +34,12 @@ VENTANA_MAX_S = 86400  # único tamaño de ventana verificado, ESPECIFICACION_FU
 # §0) — con 10s el timeout llegaba antes que la respuesta y salía como 502.
 TIMEOUT_S = 30
 REINTENTOS = 3
-BACKOFF_BASE_S = 1.0
+# 3s, 6s, 12s (con la fórmula BACKOFF_BASE_S * 2**intento de abajo): más
+# margen para que la petición anterior termine en provider antes de
+# reintentar la idéntica (ESPECIFICACION_FUENTE §0, provider_request_busy).
+BACKOFF_BASE_S = 3.0
+
+PROVIDER_REQUEST_BUSY = "provider_request_busy"
 
 # Parámetros fijos de LineFeed/*Zip contra provider.betfantasy.bet,
 # verificados desde la app real (ESPECIFICACION_FUENTE §0). Sin `gr` ni
@@ -85,19 +90,39 @@ async def _get(url: str, params: dict) -> dict:
     Sin headers de autenticación: la API de resultados es pública
     (ESPECIFICACION_FUENTE §1).
 
-    Solo se reintenta lo que puede ser transitorio: cualquier error de
-    transporte (timeout, conexión cortada, etc. — httpx.TransportError cubre
-    todos esos casos), 5xx y 429. El resto de los 4xx (ej. 400 por timestamp
-    desalineado) es un error del llamador, no algo que un reintento arregle,
-    y se propaga de inmediato.
+    Solo se reintenta lo que puede ser transitorio: `provider_request_busy`
+    en el BODY (ver abajo), cualquier error de transporte (timeout, conexión
+    cortada, etc. — httpx.TransportError cubre todos esos casos), 5xx y 429.
+    El resto de los 4xx (ej. 400 por timestamp desalineado) es un error del
+    llamador, no algo que un reintento arregle, y se propaga de inmediato.
+
+    ⚠️ `provider_request_busy` se detecta por CONTENIDO, no por status
+    (ESPECIFICACION_FUENTE §0): provider lo devolvió con 200, 409 y 429
+    indistintamente en las observaciones — adivinar el status es más frágil
+    que mirar el body directamente. Por eso el body se parsea ANTES de
+    `raise_for_status()`, una sola vez por intento (las respuestas de
+    cuotas pueden pesar 100+KB, no vale la pena parsear dos veces).
     """
     client = _get_cliente()
     for intento in range(REINTENTOS):
         ultimo_intento = intento == REINTENTOS - 1
         try:
             resp = await client.get(url, params=params)
+            try:
+                cuerpo = resp.json()
+            except ValueError:
+                cuerpo = None
+
+            if isinstance(cuerpo, dict) and cuerpo.get("error") == PROVIDER_REQUEST_BUSY:
+                if ultimo_intento:
+                    raise RuntimeError(f"{PROVIDER_REQUEST_BUSY} tras {REINTENTOS} intentos")
+                await asyncio.sleep(BACKOFF_BASE_S * (2**intento))
+                continue
+
             resp.raise_for_status()
-            return resp.json()
+            if cuerpo is None:
+                raise RuntimeError(f"respuesta no es JSON válido: {resp.text[:200]!r}")
+            return cuerpo
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             reintentable = status >= 500 or status == 429

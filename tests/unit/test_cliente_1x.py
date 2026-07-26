@@ -164,6 +164,21 @@ def _fake_get_con_status(status_code, llamadas):
     return fake_get
 
 
+def _fake_get_secuencia(respuestas, llamadas):
+    """respuestas: lista de (status_code, cuerpo_dict_o_None). Una por
+    llamada, en orden."""
+    it = iter(respuestas)
+
+    async def fake_get(self, url, params=None, **kwargs):
+        status_code, cuerpo = next(it)
+        llamadas.append(status_code)
+        request = httpx.Request("GET", url, params=params)
+        content = json.dumps(cuerpo).encode() if cuerpo is not None else b""
+        return httpx.Response(status_code, request=request, content=content)
+
+    return fake_get
+
+
 def test_get_400_hace_exactamente_una_peticion(monkeypatch):
     monkeypatch.setattr(cliente_1x, "BACKOFF_BASE_S", 0.001)
     llamadas = []
@@ -194,6 +209,83 @@ def test_get_con_reintentos_cero_levanta_runtime_error_no_none(monkeypatch):
     with pytest.raises(RuntimeError):
         resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
         assert resultado is not None  # nunca debería llegar a evaluarse
+
+
+# --- provider_request_busy: detectado por BODY, no por status --------------
+
+
+def test_get_provider_busy_reintenta_y_devuelve_la_respuesta_real(monkeypatch):
+    monkeypatch.setattr(cliente_1x, "BACKOFF_BASE_S", 0.001)
+    llamadas = []
+    respuestas = [
+        (200, {"error": "provider_request_busy"}),
+        (200, {"ok": True}),
+    ]
+
+    with patch.object(httpx.AsyncClient, "get", _fake_get_secuencia(respuestas, llamadas)):
+        resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
+
+    assert resultado == {"ok": True}
+    assert len(llamadas) == 2
+
+
+def test_get_provider_busy_se_detecta_con_status_409_no_reintentable_normalmente(monkeypatch):
+    """provider devolvió provider_request_busy con 409 en las observaciones
+    reales — 409 no es 5xx ni 429, así que sin detección por body esto
+    hubiera abortado en el primer intento. Se detecta por el body, no por
+    el status."""
+    monkeypatch.setattr(cliente_1x, "BACKOFF_BASE_S", 0.001)
+    llamadas = []
+    respuestas = [
+        (409, {"error": "provider_request_busy"}),
+        (200, {"ok": True}),
+    ]
+
+    with patch.object(httpx.AsyncClient, "get", _fake_get_secuencia(respuestas, llamadas)):
+        resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
+
+    assert resultado == {"ok": True}
+    assert len(llamadas) == 2
+
+
+def test_get_provider_busy_agota_reintentos_levanta_runtime_error(monkeypatch):
+    monkeypatch.setattr(cliente_1x, "BACKOFF_BASE_S", 0.001)
+    llamadas = []
+    respuestas = [(200, {"error": "provider_request_busy"})] * cliente_1x.REINTENTOS
+
+    with patch.object(httpx.AsyncClient, "get", _fake_get_secuencia(respuestas, llamadas)):
+        with pytest.raises(RuntimeError):
+            asyncio.run(cliente_1x._get("http://example.test/x", {}))
+
+    assert len(llamadas) == cliente_1x.REINTENTOS
+
+
+def test_get_backoff_base_es_3s():
+    """3s, 6s, 12s con la fórmula existente (BACKOFF_BASE_S * 2**intento) —
+    ESPECIFICACION_FUENTE §0."""
+    assert cliente_1x.BACKOFF_BASE_S == 3.0
+
+
+def test_get_provider_busy_no_duplica_el_sleep(monkeypatch):
+    """El `continue` del camino busy tiene que saltar el sleep final del
+    loop — un solo sleep por intento fallido, no dos."""
+    monkeypatch.setattr(cliente_1x, "BACKOFF_BASE_S", 0.001)
+    llamadas_sleep = []
+
+    async def fake_sleep(segundos):
+        llamadas_sleep.append(segundos)
+
+    monkeypatch.setattr(cliente_1x.asyncio, "sleep", fake_sleep)
+
+    respuestas = [
+        (200, {"error": "provider_request_busy"}),
+        (200, {"ok": True}),
+    ]
+    with patch.object(httpx.AsyncClient, "get", _fake_get_secuencia(respuestas, [])):
+        resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
+
+    assert resultado == {"ok": True}
+    assert len(llamadas_sleep) == 1
 
 
 # --- obtener_ligas_con_cuotas (paso 1 del flujo de dos pasos) --------------
