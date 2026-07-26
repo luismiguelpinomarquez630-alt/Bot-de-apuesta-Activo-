@@ -32,6 +32,15 @@ temporal corrido en Railway (PRs #18-#25, ya revertido).
 | Formato de respuesta | ✅ Idéntico a 1x: sobre `{Success, Value}` en `LineFeed/*Zip`, esquema `_VZip` (§7: `I`, `E[]`, `T`, `C`, `CV`, `P`, `G`, `CE`), `count`/`items` en los endpoints de `/result/` |
 | Resultados (`v2/champs`, `v3/games`) | ✅ Mismos parámetros que 1x: `lng=es`, `ref=156` (sin `country`/`partner`) |
 | Cuotas (`LineFeed/Get1x2_VZip`) | ✅ Verificado contra la URL real de la app (Network): `lng=es`, `mode=4`, `country=71`, `partner=188`, `virtualSports=true`, `getEmpty=true`, `countryFirst=true` — **sin `gr` ni `cfview`, la app no los manda** |
+| Ligas (`LiveFeed/WebGetTopChampsZip`) | ✅ Verificado desde Safari: `lng=es`, `country=94`, `gr=413` — **sin `partner`** |
+
+⚠️ **Los dos endpoints de LiveFeed/LineFeed usan parámetros de operador
+DISTINTOS. NO son intercambiables** — `country=71/partner=188` (los de
+`Get1x2_VZip`) contra `WebGetTopChampsZip` dieron 502 constante; `country=94/
+gr=413` ahí sí funciona (200, ligas de fútbol con `SI`/`LI` correctos).
+Confirmado primero desde Railway con 502 constante en `WebGetTopChampsZip`
+con 71/188, y después desde Safari con 94/413 funcionando en el mismo
+endpoint.
 
 ⚠️ **`Get1x2_VZip` EXIGE `champs=<champ_id>`. No permite barrer un deporte
 entero de una — a diferencia de 1x.** Esta fue la causa real de que el
@@ -39,16 +48,23 @@ primer intento devolviera `Value` vacío (y, con `count` alto, 502 por
 Cloudflare): faltaba el filtro por liga, no alcanza con `sports`. Flujo de
 dos pasos, obligatorio:
 
-1. **`LiveFeed/WebGetTopChampsZip`** (`lng=es`, `country=71`, `partner=188`,
-   sin más parámetros) → lista de ligas. Campo del id de liga: `LI`. Devuelve
-   un set **reducido** ("top" leagues) — verificado que ya viene sin ligas
+1. **`LiveFeed/WebGetTopChampsZip`** (`lng=es`, `country=94`, `gr=413`, sin
+   `partner`) → lista de ligas. Campo del id de liga: `LI`. Devuelve un set
+   **reducido** ("top" leagues) — verificado que ya viene sin ligas
    sintéticas, así que sirve como whitelist natural: a diferencia de
    `v2/champs` (que sí mezcla simuladas, §10), acá no hace falta armar una
    lista manual. El filtro por deporte es del lado del cliente, sobre el
    campo `SI` de cada item — **verificado contra el JSON real:** `SI=1`
    trae `SN="Fútbol"` (mismo campo que en el esquema `_VZip`).
 2. **`LineFeed/Get1x2_VZip`** por cada liga del paso 1, con `champs=<LI>`
-   sumado a los parámetros de cuotas de la tabla de arriba.
+   sumado a los parámetros de cuotas de la tabla de arriba (`country=71`,
+   `partner=188`, sin `gr`).
+
+❌ **Pendiente de verificar en el primer refresco real:** `Get1x2_VZip` con
+`country=71/partner=188` trajo cuotas en la app (Network), pero no se probó
+AISLADO desde Railway con los parámetros ya separados por endpoint. Si el
+paso 2 también diera 502 con `71/188` desde datacenter, habría que probar
+`94/413` ahí también — pero primero observar si hace falta.
 
 ⚠️ **Nota de operación: el set de `WebGetTopChampsZip` es chico a
 propósito** (header `live-top-leagues` — puede ser 1-5 ligas, no decenas).
