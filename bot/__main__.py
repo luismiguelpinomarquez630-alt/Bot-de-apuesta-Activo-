@@ -66,7 +66,10 @@ def cargar_config() -> Config:
         # min es frecuente para no demorar la liquidación sin golpear la DB
         # ni el feed de más.
         intervalo_liquidacion_s=int(os.environ.get("BOT_INTERVALO_LIQUIDACION_S", 180)),
-        count_cuotas=int(os.environ.get("BOT_COUNT_CUOTAS", 1000)),
+        # 50, no 1000: con count alto provider no arma el feed dentro del
+        # timeout y Cloudflare corta con 502 (ESPECIFICACION_FUENTE §0). La
+        # app real de betfantasy usa counts mucho menores.
+        count_cuotas=int(os.environ.get("BOT_COUNT_CUOTAS", 50)),
     )
 
 
