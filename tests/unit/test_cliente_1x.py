@@ -215,6 +215,23 @@ def test_obtener_ligas_con_cuotas_filtra_por_sport_y_mapea_champ_id():
     assert {liga.champ_id for liga in resultado} == {110163, 2664249}
 
 
+def test_obtener_ligas_con_cuotas_descarta_item_sin_li_sin_reventar():
+    """provider es intermitente: un item parcial sin LI no debe tumbar el
+    refresco de las demás ligas."""
+    respuesta = {
+        "Success": True,
+        "Value": [
+            {"SI": 1, "L": "Liga sin id"},  # sin LI, se descarta
+            {"LI": 110163, "SI": 1, "L": "Italia. Serie A"},
+        ],
+    }
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
+
+    assert {liga.champ_id for liga in resultado} == {110163}
+
+
 def test_obtener_ligas_con_cuotas_success_false_levanta_error():
     respuesta = {"Success": False, "Error": "algo salió mal", "Value": []}
 

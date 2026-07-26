@@ -11,6 +11,7 @@ del bot entero mientras dura.
 """
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -18,6 +19,8 @@ from decimal import ROUND_HALF_UP, Decimal
 import httpx
 
 from bot.dominio.mercados import TIPOS_SOPORTADOS, linea_valida
+
+_logger = logging.getLogger(__name__)
 
 # bol.1xbet.com no sirve desde datacenter (403 por IP/ASN, verificado desde
 # Railway). provider.betfantasy.bet es la fuente real de producción: mismo
@@ -225,10 +228,6 @@ class LigaConCuotas:
     champ_id: int  # LI
 
 
-def _parsear_liga(item: dict) -> LigaConCuotas:
-    return LigaConCuotas(champ_id=item["LI"])
-
-
 async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
     """Paso 1 del flujo de dos pasos para cuotas (ESPECIFICACION_FUENTE §0):
     provider EXIGE `champs=<champ_id>` en `Get1x2_VZip`, no permite barrer
@@ -245,6 +244,11 @@ async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
     `SN="Fútbol"`) — mismo campo que usa el esquema `_VZip` de
     `Get1x2_VZip` (ESPECIFICACION_FUENTE §7). No hay un parámetro de query
     verificado para pedir un solo deporte a este endpoint en particular.
+
+    ⚠️ provider es intermitente: puede devolver items parciales sin `LI`.
+    Un item así se descarta y se loguea, no revienta el refresco de las
+    demás ligas (mismo patrón que `data.get("items", [])` en los endpoints
+    de resultados, ESPECIFICACION_FUENTE §3.2).
     """
     payload = await _get(
         f"{BASE_URL}/service-api/LiveFeed/WebGetTopChampsZip",
@@ -252,7 +256,17 @@ async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
     )
     if not payload.get("Success"):
         raise RuntimeError(f"WebGetTopChampsZip devolvió Success=false: {payload.get('Error')!r}")
-    return [_parsear_liga(item) for item in payload.get("Value", []) if item.get("SI") == sport_id]
+
+    ligas = []
+    for item in payload.get("Value", []):
+        if item.get("SI") != sport_id:
+            continue
+        champ_id = item.get("LI")
+        if champ_id is None:
+            _logger.warning("obtener_ligas_con_cuotas: liga sin LI, descartada: %r", item)
+            continue
+        ligas.append(LigaConCuotas(champ_id=champ_id))
+    return ligas
 
 
 async def obtener_cuotas(sport_id: int, champ_id: int, count: int) -> list[EventoCuotas]:
