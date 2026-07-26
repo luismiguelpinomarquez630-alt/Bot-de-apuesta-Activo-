@@ -196,6 +196,54 @@ def test_get_con_reintentos_cero_levanta_runtime_error_no_none(monkeypatch):
         assert resultado is not None  # nunca debería llegar a evaluarse
 
 
+# --- obtener_ligas_con_cuotas (paso 1 del flujo de dos pasos) --------------
+
+
+def test_obtener_ligas_con_cuotas_filtra_por_sport_y_mapea_champ_id():
+    respuesta = {
+        "Success": True,
+        "Value": [
+            {"LI": 110163, "SI": 1, "L": "Italia. Serie A"},
+            {"LI": 2664249, "SI": 1, "L": "Australia. NPL Victoria"},
+            {"LI": 999999, "SI": 3, "L": "Liga de baloncesto"},  # otro deporte, se descarta
+        ],
+    }
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
+
+    assert {liga.champ_id for liga in resultado} == {110163, 2664249}
+
+
+def test_obtener_ligas_con_cuotas_success_false_levanta_error():
+    respuesta = {"Success": False, "Error": "algo salió mal", "Value": []}
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        with pytest.raises(RuntimeError):
+            asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
+
+
+def test_obtener_ligas_con_cuotas_value_vacio_devuelve_lista_vacia():
+    respuesta = {"Success": True, "Value": []}
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta):
+        resultado = asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
+
+    assert resultado == []
+
+
+def test_obtener_ligas_con_cuotas_pide_los_parametros_de_operador_correctos():
+    respuesta = {"Success": True, "Value": []}
+
+    with patch.object(cliente_1x, "_get", return_value=respuesta) as mock_get:
+        asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
+
+    url, params = mock_get.call_args[0]
+    assert "WebGetTopChampsZip" in url
+    assert params["country"] == 71
+    assert params["partner"] == 188
+
+
 # --- obtener_cuotas (mockeado a nivel de _get, ningún test toca la red) ----
 
 
@@ -203,7 +251,7 @@ def test_obtener_cuotas_filtra_tipo_no_soportado_y_su_linea():
     respuesta = _cargar("lineFeed_get1x2_vzip.json")
 
     with patch.object(cliente_1x, "_get", return_value=respuesta):
-        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, champ_id=110163, count=1000))
 
     assert len(resultado) == 1
     evento = resultado[0]
@@ -216,7 +264,7 @@ def test_obtener_cuotas_mapea_el_evento():
     respuesta = _cargar("lineFeed_get1x2_vzip.json")
 
     with patch.object(cliente_1x, "_get", return_value=respuesta):
-        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, champ_id=110163, count=1000))
 
     evento = resultado[0]
     assert evento.game_id == 730330581
@@ -231,7 +279,7 @@ def test_obtener_cuotas_cuota_milesimas():
     respuesta = _cargar("lineFeed_get1x2_vzip.json")
 
     with patch.object(cliente_1x, "_get", return_value=respuesta):
-        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, champ_id=110163, count=1000))
 
     mercado_t7 = next(m for m in resultado[0].mercados if m.tipo == 7)
     assert mercado_t7.cuota_milesimas == 1788
@@ -244,23 +292,28 @@ def test_obtener_cuotas_success_false_levanta_error():
 
     with patch.object(cliente_1x, "_get", return_value=respuesta):
         with pytest.raises(RuntimeError):
-            asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+            asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, champ_id=110163, count=1000))
 
 
 def test_obtener_cuotas_value_vacio_devuelve_lista_vacia():
     respuesta = {"Success": True, "Value": []}
 
     with patch.object(cliente_1x, "_get", return_value=respuesta):
-        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+        resultado = asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, champ_id=110163, count=1000))
 
     assert resultado == []
 
 
-def test_obtener_cuotas_nunca_pide_virtual_sports_true():
+def test_obtener_cuotas_pide_champ_id_y_virtual_sports_true():
+    """ESPECIFICACION_FUENTE §0: provider exige `champs=<champ_id>` (paso 2
+    del flujo de dos pasos) y usa `virtualSports=true`, al revés de 1x — el
+    whitelist del paso 1 ya excluye ligas sintéticas, este flag no filtra
+    nada más."""
     respuesta = {"Success": True, "Value": []}
 
     with patch.object(cliente_1x, "_get", return_value=respuesta) as mock_get:
-        asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, count=1000))
+        asyncio.run(cliente_1x.obtener_cuotas(sport_id=1, champ_id=110163, count=1000))
 
     _, params = mock_get.call_args[0]
-    assert params["virtualSports"] is False
+    assert params["champs"] == 110163
+    assert params["virtualSports"] is True

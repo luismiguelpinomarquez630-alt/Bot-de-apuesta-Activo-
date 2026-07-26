@@ -52,12 +52,7 @@ def test_arranque_migra_y_apagado_cierra_cliente(tmp_path):
     detener = asyncio.Event()
     detener.set()  # ya "señalado": main_async debe pasar de largo a apagar
 
-    # bot_main._diagnostico_temporal hace requests reales (bloque temporal
-    # de diagnóstico de infraestructura, ver bot/__main__.py) — mockeado acá
-    # para no romper la regla de "sin red" en los tests.
-    with patch.object(cliente_1x, "cerrar_cliente") as mock_cerrar, patch.object(
-        bot_main, "_diagnostico_temporal", return_value=None
-    ):
+    with patch.object(cliente_1x, "cerrar_cliente") as mock_cerrar:
         _run(bot_main.main_async(config, detener=detener))
 
     mock_cerrar.assert_called_once()
@@ -126,7 +121,10 @@ def test_ciclo_completo_refresco_y_liquidacion(tmp_path):
         equipo_visitante="Visitante",
         mercados=[cliente_1x.MercadoCuota(tipo=1, cuota_milesimas=2000, parametro=None, group=1)],
     )
-    with patch.object(cliente_1x, "obtener_cuotas", return_value=[evento]):
+    liga = cliente_1x.LigaConCuotas(champ_id=1)
+    with patch.object(cliente_1x, "obtener_ligas_con_cuotas", return_value=[liga]), patch.object(
+        cliente_1x, "obtener_cuotas", return_value=[evento]
+    ):
         _run(bot_main._job_refrescar_cuotas([1], 1000))
 
     cuota_fresca = cache_cuotas.obtener_cuota_fresca(game_id, 1, None, int(time.time()))
