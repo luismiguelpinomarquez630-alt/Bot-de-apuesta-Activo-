@@ -131,6 +131,46 @@ def construir_scheduler(config: Config) -> AsyncIOScheduler:
     return scheduler
 
 
+# === DIAGNOSTICO TEMPORAL - QUITAR ===
+async def _diagnostico_temporal() -> None:
+    """Desechable: `WebGetTopChampsZip` (paso 1 del flujo de dos pasos para
+    cuotas — Get1x2_VZip exige `champs=<champ_id>`, no barre por sport solo)
+    nunca se documentó con un JSON completo. Loguea el cuerpo entero (hasta
+    4000 chars) con los parámetros de operador ya corregidos
+    (`country=71`, `partner=188`) para ver el sobre, el campo del id de
+    liga, cuántas ligas de fútbol trae y qué distingue una real de una
+    simulada. Borrar esta función y su llamada en main_async una vez leídos
+    los logs de Railway.
+
+    ⚠️ Nunca puede impedir el arranque: TODO acá adentro está cubierto por
+    un try/except Exception amplio que loguea y sigue.
+    """
+    try:
+        import httpx
+
+        url = "https://provider.betfantasy.bet/service-api/LiveFeed/WebGetTopChampsZip?lng=es&country=71&partner=188"
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            inicio = time.monotonic()
+            try:
+                resp = await client.get(url)
+                duracion_s = time.monotonic() - inicio
+                _logger.warning(
+                    "DIAGNOSTICO: WebGetTopChampsZip -> status=%s duracion=%.2fs body[:4000]=%r",
+                    resp.status_code,
+                    duracion_s,
+                    resp.text[:4000],
+                )
+            except Exception as exc:
+                duracion_s = time.monotonic() - inicio
+                _logger.warning(
+                    "DIAGNOSTICO: WebGetTopChampsZip -> error de transporte tras %.2fs: %r", duracion_s, exc
+                )
+    except Exception:
+        _logger.exception("DIAGNOSTICO: el bloque temporal falló entero, se ignora")
+# === FIN DIAGNOSTICO TEMPORAL ===
+
+
 async def main_async(config: Config, detener: asyncio.Event | None = None) -> None:
     """`ARRANQUE_TS` de `settlement_engine` (su guarda de arranque) se
     captura al importar ese módulo, arriba de este archivo — antes de que
@@ -140,6 +180,10 @@ async def main_async(config: Config, detener: asyncio.Event | None = None) -> No
     `detener`: si se pasa (tests), se usa tal cual en vez de instalar
     handlers de señal — permite disparar el apagado sin tocar señales de
     verdad."""
+    # === DIAGNOSTICO TEMPORAL - QUITAR ===
+    await _diagnostico_temporal()
+    # === FIN DIAGNOSTICO TEMPORAL ===
+
     conn_arranque = _abrir_conexion(config.db_path)
     aplicar_migraciones(conn_arranque)
     conn_arranque.close()
