@@ -85,6 +85,15 @@ real usa counts mucho menores. Consecuencias, ya aplicadas:
   reintenta (`status >= 500`), sin cambios — la responsabilidad es de la
   capa de reintentos existente, no de código nuevo.
 
+⚠️ **`provider_request_busy`: se detecta por el BODY, no por el status.**
+Observado con `200`, `409` y `429` indistintamente — adivinar el status es
+más frágil que mirar el contenido. `cliente_1x._get()` parsea el body antes
+de `raise_for_status()` y, si trae `{"error": "provider_request_busy"}`, lo
+trata como transitorio y reintenta con el mismo backoff que un 5xx.
+`BACKOFF_BASE_S` subido de 1s a 3s (misma fórmula `* 2**intento`: 3s, 6s,
+12s) para dar más margen a que la petición anterior termine en provider
+antes de reintentar la idéntica.
+
 `bol.1xbet.com` queda como referencia de formato y de la ingeniería inversa
 original (§1 en adelante la sigue documentando), pero el cliente apunta a
 `provider.betfantasy.bet`.
