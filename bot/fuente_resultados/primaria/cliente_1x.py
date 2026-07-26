@@ -11,6 +11,7 @@ del bot entero mientras dura.
 """
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -19,11 +20,13 @@ import httpx
 
 from bot.dominio.mercados import TIPOS_SOPORTADOS, linea_valida
 
+_logger = logging.getLogger(__name__)
+
 # bol.1xbet.com no sirve desde datacenter (403 por IP/ASN, verificado desde
 # Railway). provider.betfantasy.bet es la fuente real de producción: mismo
 # formato, sin auth, responde 200 desde datacenter (ESPECIFICACION_FUENTE §0).
 BASE_URL = "https://provider.betfantasy.bet"
-REF = 156  # resultados (`ref`) y cuotas (`partner`): 156 en ambos, verificado
+REF = 156  # resultados (`ref`), verificado — cuotas usa su propio `partner`, ver abajo
 LNG = "es"
 
 VENTANA_MAX_S = 86400  # único tamaño de ventana verificado, ESPECIFICACION_FUENTE §2
@@ -33,13 +36,12 @@ TIMEOUT_S = 30
 REINTENTOS = 3
 BACKOFF_BASE_S = 1.0
 
-# Parámetros fijos de LineFeed/Get1x2_VZip contra provider.betfantasy.bet,
-# verificados desde la app real (ESPECIFICACION_FUENTE §0). country/gr son
-# los de provider, NO los de 1x (97/687).
-LINEFEED_CFVIEW = 2
+# Parámetros fijos de LineFeed/*Zip contra provider.betfantasy.bet,
+# verificados desde la app real (ESPECIFICACION_FUENTE §0). Sin `gr` ni
+# `cfview`: la app no los manda, y probablemente eran la causa del 502.
 LINEFEED_MODE = 4
-LINEFEED_COUNTRY = 94
-LINEFEED_GR = 413
+LINEFEED_COUNTRY = 71
+LINEFEED_PARTNER = 188
 
 _RX_SCORE = re.compile(r"^(\d+):(\d+)\s*(?:\(([^)]*)\))?$")
 
@@ -221,10 +223,62 @@ def _parsear_evento(item: dict) -> EventoCuotas:
     )
 
 
-async def obtener_cuotas(sport_id: int, count: int) -> list[EventoCuotas]:
-    """Cuotas prepartido en bloque (ESPECIFICACION_FUENTE §3.3).
+@dataclass(frozen=True)
+class LigaConCuotas:
+    champ_id: int  # LI
 
-    ⚠️ `virtualSports=false` SIEMPRE: `true` mete deportes simulados al feed.
+
+async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
+    """Paso 1 del flujo de dos pasos para cuotas (ESPECIFICACION_FUENTE §0):
+    provider EXIGE `champs=<champ_id>` en `Get1x2_VZip`, no permite barrer
+    un deporte entero de una — a diferencia de 1x. Esta función da el set
+    de ligas por las que iterar en el paso 2 (`obtener_cuotas`).
+
+    Devuelve un set reducido ("top" leagues, verificado): ya viene sin
+    ligas sintéticas, así que sirve como whitelist natural — a diferencia
+    de `v2/champs`, que sí mezcla simuladas (ESPECIFICACION_FUENTE §10), acá
+    no hace falta una lista manual.
+
+    ⚠️ El filtro por `sport_id` es del lado del cliente, sobre el campo
+    `SI` de cada item (verificado contra el JSON real: `SI=1` trae
+    `SN="Fútbol"`) — mismo campo que usa el esquema `_VZip` de
+    `Get1x2_VZip` (ESPECIFICACION_FUENTE §7). No hay un parámetro de query
+    verificado para pedir un solo deporte a este endpoint en particular.
+
+    ⚠️ provider es intermitente: puede devolver items parciales sin `LI`.
+    Un item así se descarta y se loguea, no revienta el refresco de las
+    demás ligas (mismo patrón que `data.get("items", [])` en los endpoints
+    de resultados, ESPECIFICACION_FUENTE §3.2).
+    """
+    payload = await _get(
+        f"{BASE_URL}/service-api/LiveFeed/WebGetTopChampsZip",
+        {"lng": LNG, "country": LINEFEED_COUNTRY, "partner": LINEFEED_PARTNER},
+    )
+    if not payload.get("Success"):
+        raise RuntimeError(f"WebGetTopChampsZip devolvió Success=false: {payload.get('Error')!r}")
+
+    ligas = []
+    for item in payload.get("Value", []):
+        if item.get("SI") != sport_id:
+            continue
+        champ_id = item.get("LI")
+        if champ_id is None:
+            _logger.warning("obtener_ligas_con_cuotas: liga sin LI, descartada: %r", item)
+            continue
+        ligas.append(LigaConCuotas(champ_id=champ_id))
+    return ligas
+
+
+async def obtener_cuotas(sport_id: int, champ_id: int, count: int) -> list[EventoCuotas]:
+    """Cuotas prepartido de UNA liga (ESPECIFICACION_FUENTE §0/§3.3).
+
+    ⚠️ Paso 2 del flujo de dos pasos: `champ_id` sale de
+    `obtener_ligas_con_cuotas` (paso 1). provider exige `champs=<champ_id>`
+    — sin liga, `sports` solo devuelve `Value` vacío.
+
+    ⚠️ `virtualSports=true` acá, al revés del `false` de 1x (§3.3): la
+    exclusión de ligas sintéticas ya la hace el whitelist del paso 1, así
+    que este flag no filtra nada más — se deja igual que la app real.
 
     LineFeed/*Zip usa el sobre `{Success, Value}` (con V mayúscula), a
     diferencia de los endpoints `/result/`, que usan `{items}`. Si
@@ -237,15 +291,16 @@ async def obtener_cuotas(sport_id: int, count: int) -> list[EventoCuotas]:
     payload = await _get(
         f"{BASE_URL}/service-api/LineFeed/Get1x2_VZip",
         {
-            "sports": sport_id,  # SIEMPRE filtrado por deporte: reduce a la mitad tiempo/volumen
+            "sports": sport_id,
+            "champs": champ_id,
             "count": count,
             "lng": LNG,
-            "cfview": LINEFEED_CFVIEW,
             "mode": LINEFEED_MODE,
             "country": LINEFEED_COUNTRY,
-            "partner": REF,
-            "gr": LINEFEED_GR,
-            "virtualSports": False,
+            "partner": LINEFEED_PARTNER,
+            "virtualSports": True,
+            "getEmpty": True,
+            "countryFirst": True,
         },
     )
     if not payload.get("Success"):

@@ -21,7 +21,7 @@ Contrato de la fuente de datos para `bot/fuente_resultados/`.
 peticiones que salen de Railway, aunque el mismo endpoint responde 200 desde
 un navegador en Cuba — es un bloqueo por IP/ASN del lado de 1x, no un
 problema de parámetros ni de headers. Verificado con un diagnóstico
-temporal corrido en Railway (PRs #18-#22, ya revertido).
+temporal corrido en Railway (PRs #18-#25, ya revertido).
 
 **Fuente real de producción: `https://provider.betfantasy.bet`.**
 
@@ -30,36 +30,64 @@ temporal corrido en Railway (PRs #18-#22, ya revertido).
 | Responde 200 desde datacenter | ✅ Verificado en Railway |
 | Autenticación | ✅ Ninguna, igual que `bol.1xbet.com` |
 | Formato de respuesta | ✅ Idéntico a 1x: sobre `{Success, Value}` en `LineFeed/*Zip`, esquema `_VZip` (§7: `I`, `E[]`, `T`, `C`, `CV`, `P`, `G`, `CE`), `count`/`items` en los endpoints de `/result/` |
-| Resultados (`v2/champs`, `v3/games`) | ✅ Mismos parámetros que 1x: `lng=es`, `ref=156` (sin `country`/`gr`) |
-| Cuotas (`LineFeed/Get1x2_VZip`) | ✅ Verificado contra la app real de betfantasy (Network): `lng=es`, `cfview=2`, `mode=4`, `country=94`, `gr=413` — **`country`/`gr` son los de provider, NO los de 1x (97/687)**. `partner=156` ❌ sin verificar, ver nota abajo |
+| Resultados (`v2/champs`, `v3/games`) | ✅ Mismos parámetros que 1x: `lng=es`, `ref=156` (sin `country`/`partner`) |
+| Cuotas (`LineFeed/Get1x2_VZip`) | ✅ Verificado contra la URL real de la app (Network): `lng=es`, `mode=4`, `country=71`, `partner=188`, `virtualSports=true`, `getEmpty=true`, `countryFirst=true` — **sin `gr` ni `cfview`, la app no los manda** |
 
-⚠️ **`Get1x2_VZip` es lento y pesado contra provider: 4-10s, 100+KB.** Con
-`sports` filtrado (un solo deporte) baja a la mitad: 52KB/2.44s medido,
-contra 128KB/4.25s sin filtrar. Consecuencias, ya aplicadas:
+⚠️ **`Get1x2_VZip` EXIGE `champs=<champ_id>`. No permite barrer un deporte
+entero de una — a diferencia de 1x.** Esta fue la causa real de que el
+primer intento devolviera `Value` vacío (y, con `count` alto, 502 por
+Cloudflare): faltaba el filtro por liga, no alcanza con `sports`. Flujo de
+dos pasos, obligatorio:
 
-- `cliente_1x.TIMEOUT_S` subido de 10s a 30s — con 10s el timeout llegaba
-  antes que la respuesta y salía como 502 en el llamador.
-- `cliente_1x.obtener_cuotas()` **siempre** filtra por `sports`, nunca pide
-  el feed completo sin filtrar.
+1. **`LiveFeed/WebGetTopChampsZip`** (`lng=es`, `country=71`, `partner=188`,
+   sin más parámetros) → lista de ligas. Campo del id de liga: `LI`. Devuelve
+   un set **reducido** ("top" leagues) — verificado que ya viene sin ligas
+   sintéticas, así que sirve como whitelist natural: a diferencia de
+   `v2/champs` (que sí mezcla simuladas, §10), acá no hace falta armar una
+   lista manual. El filtro por deporte es del lado del cliente, sobre el
+   campo `SI` de cada item — **verificado contra el JSON real:** `SI=1`
+   trae `SN="Fútbol"` (mismo campo que en el esquema `_VZip`).
+2. **`LineFeed/Get1x2_VZip`** por cada liga del paso 1, con `champs=<LI>`
+   sumado a los parámetros de cuotas de la tabla de arriba.
+
+⚠️ **Nota de operación: el set de `WebGetTopChampsZip` es chico a
+propósito** (header `live-top-leagues` — puede ser 1-5 ligas, no decenas).
+Un refresco de cuotas que solo trae fútbol de un puñado de ligas es
+**comportamiento esperado, no un bug** del flujo de dos pasos. Pendiente de
+observar en producción: si esa cobertura de "top leagues" alcanza para
+ofrecer suficiente fútbol prepartido, o si hace falta buscar otra vía para
+ampliarla.
+
+Implementado en `bot/fuente_resultados/primaria/cliente_1x.py`
+(`obtener_ligas_con_cuotas` + `obtener_cuotas(sport_id, champ_id, count)`) y
+orquestado en `bot/fuente_resultados/cache_cuotas.py::refrescar()`:
+secuencial (no concurrente — no tiene sentido golpear a provider con N
+pedidos en paralelo justo después de haber visto que Cloudflare corta
+pedidos grandes con 502) y todo-o-nada (si falla el paso 1 o CUALQUIER
+liga del paso 2, se aborta el refresco entero y se conserva el snapshot
+anterior completo, nunca uno a medias).
+
+⚠️ **`Get1x2_VZip` es lento y pesado contra provider: 4-10s, 100+KB por
+liga.** Con `sports` filtrado (un solo deporte) baja a la mitad: 52KB/2.44s
+medido, contra 128KB/4.25s sin filtrar. `count` alto (1000) hace que
+Cloudflare corte con 502 antes de que provider arme la respuesta — la app
+real usa counts mucho menores. Consecuencias, ya aplicadas:
+
+- `cliente_1x.TIMEOUT_S` subido de 10s a 30s.
+- `cliente_1x.obtener_cuotas()` **siempre** filtra por `sports` y por
+  `champs` (obligatorio, ver arriba).
+- Default de `count` bajado de 1000 a 50 (`BOT_COUNT_CUOTAS`).
 - `cache_cuotas.INTERVALO_REFRESCO_S` subido de 15s a 45s y
   `cache_cuotas.TTL_S` de 30s a 90s (`CACHE_CUOTAS.md §6-§7`), para que un
-  ciclo lento no solape con el siguiente ni deje el snapshot vencido.
+  ciclo lento (ahora con N ligas en secuencia) no solape con el siguiente
+  ni deje el snapshot vencido.
+- 502 esporádicos (no crónicos) de Cloudflare: `cliente_1x._get()` ya los
+  reintenta (`status >= 500`), sin cambios — la responsabilidad es de la
+  capa de reintentos existente, no de código nuevo.
 
 `bol.1xbet.com` queda como referencia de formato y de la ingeniería inversa
-original (§1 en adelante la sigue documentando), pero el cliente
-(`bot/fuente_resultados/primaria/cliente_1x.py`) apunta a `provider.betfantasy.bet`.
-
-❌ **No verificado: `partner=156` para CUOTAS.** Se dedujo por analogía con
-`ref=156`, que sí está verificado pero para RESULTADOS — un endpoint
-distinto. Si `provider` ignora `partner` o espera otro valor para
-`Get1x2_VZip`, la respuesta puede volver `Success:true` con `Value` vacío o
-con partidos de otra región, **sin ningún error** que lo delate.
-
-⚠️ **Primera verificación obligatoria al desplegar la fuente real:**
-confirmar en los logs que el refresco de cuotas trae `Value` no vacío, con
-partidos de `country=94`. Si viene vacío (o con datos de otra región) pero
-`Success:true`, el problema es `partner`/`gr` mal configurados — no un fallo
-de código, y no lo va a mostrar ningún traceback.
+original (§1 en adelante la sigue documentando), pero el cliente apunta a
+`provider.betfantasy.bet`.
 
 ---
 

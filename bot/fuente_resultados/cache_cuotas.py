@@ -55,14 +55,27 @@ def _clave(game_id: int, market_type: int, parametro: Decimal | None) -> ClaveMe
 async def refrescar(sport_id: int, count: int, ahora_ts: int) -> None:
     """Trae el feed y reemplaza el snapshot de ese deporte (§7).
 
-    Si `obtener_cuotas` falla, el snapshot anterior se conserva tal cual: las
-    cuotas que ya tenía siguen envejeciendo y venciendo por su propio
-    `capturada_ts` (§6). Nunca se sirve nada como si fuera fresco por culpa de
-    un refresco fallido.
+    Flujo de dos pasos (ESPECIFICACION_FUENTE §0): provider exige
+    `champs=<champ_id>` en `Get1x2_VZip`, no permite barrer un deporte
+    entero. Primero se listan las ligas (`obtener_ligas_con_cuotas`) y
+    después se pide cada una, una por una — secuencial, no concurrente: no
+    tiene sentido golpear a provider con N pedidos en paralelo justo
+    después de haber visto que Cloudflare corta pedidos grandes con 502.
+
+    Todo o nada: si CUALQUIER paso falla — listar ligas o traer la cuota de
+    UNA sola liga — se aborta el refresco entero y el snapshot anterior se
+    conserva tal cual (mismo contrato de antes, extendido). Las cuotas que
+    ya tenía siguen envejeciendo y venciendo por su propio `capturada_ts`
+    (§6). Nunca se sirve nada como si fuera fresco por culpa de un refresco
+    fallido, ni se arma un snapshot a medias con algunas ligas actualizadas
+    y otras no.
     """
     global _snapshot
     try:
-        eventos = await cliente_1x.obtener_cuotas(sport_id, count)
+        ligas = await cliente_1x.obtener_ligas_con_cuotas(sport_id)
+        eventos: list[cliente_1x.EventoCuotas] = []
+        for liga in ligas:
+            eventos.extend(await cliente_1x.obtener_cuotas(sport_id, liga.champ_id, count))
     except Exception:
         _logger.warning("refrescar(sport_id=%s) falló, se conserva el snapshot anterior", sport_id, exc_info=True)
         return
