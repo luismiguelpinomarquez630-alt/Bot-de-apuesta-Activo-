@@ -342,7 +342,7 @@ def test_obtener_ligas_con_cuotas_value_vacio_devuelve_lista_vacia():
 
 
 def test_obtener_ligas_con_cuotas_pide_los_parametros_de_operador_correctos():
-    """WebGetTopChampsZip usa country=94/gr=413 — DISTINTOS de los de
+    """GetChampsZip usa country=71/partner=152 — DISTINTOS de los de
     Get1x2_VZip (71/188). No son intercambiables (ESPECIFICACION_FUENTE §0)."""
     respuesta = {"Success": True, "Value": []}
 
@@ -350,10 +350,31 @@ def test_obtener_ligas_con_cuotas_pide_los_parametros_de_operador_correctos():
         asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
 
     url, params = mock_get.call_args[0]
-    assert "WebGetTopChampsZip" in url
-    assert params["country"] == 94
-    assert params["gr"] == 413
-    assert "partner" not in params
+    assert "LineFeed/GetChampsZip" in url
+    assert params["sport"] == 1
+    assert params["country"] == 71
+    assert params["partner"] == 152
+    assert params["groupChamps"] is True
+
+
+def test_obtener_ligas_con_cuotas_no_asume_respuesta_instantanea():
+    """GetChampsZip puede venir de caché HIT (rápido) o backend MISS (más
+    lento) — el código no debe asumir timing; los reintentos con backoff
+    de _get ya cubren esa variabilidad, este test solo confirma que
+    obtener_ligas_con_cuotas no depende de que la respuesta llegue ya."""
+    respuesta = {
+        "Success": True,
+        "Value": [{"LI": 110163, "SI": 1, "L": "Italia. Serie A"}],
+    }
+
+    async def _get_con_demora(url, params):
+        await asyncio.sleep(0.01)
+        return respuesta
+
+    with patch.object(cliente_1x, "_get", side_effect=_get_con_demora):
+        resultado = asyncio.run(cliente_1x.obtener_ligas_con_cuotas(sport_id=1))
+
+    assert {liga.champ_id for liga in resultado} == {110163}
 
 
 # --- obtener_cuotas (mockeado a nivel de _get, ningún test toca la red) ----
