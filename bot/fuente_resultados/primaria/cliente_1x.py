@@ -41,9 +41,17 @@ BACKOFF_BASE_S = 3.0
 
 PROVIDER_REQUEST_BUSY = "provider_request_busy"
 
-# Parámetros fijos de LineFeed/*Zip contra provider.betfantasy.bet,
-# verificados desde la app real (ESPECIFICACION_FUENTE §0). Sin `gr` ni
-# `cfview`: la app no los manda, y probablemente eran la causa del 502.
+# ⚠️ Los dos endpoints de LiveFeed/LineFeed usan parámetros de operador
+# DISTINTOS contra provider.betfantasy.bet (ESPECIFICACION_FUENTE §0) — no
+# son intercambiables, verificado desde Railway y desde Safari:
+#   WebGetTopChampsZip (paso 1, listado de ligas): country=94, gr=413
+#   Get1x2_VZip (paso 2, cuotas por liga): country=71, partner=188, sin gr
+
+# Parámetros fijos de LiveFeed/WebGetTopChampsZip.
+TOPCHAMPS_COUNTRY = 94
+TOPCHAMPS_GR = 413
+
+# Parámetros fijos de LineFeed/Get1x2_VZip. Sin `cfview`: la app no lo manda.
 LINEFEED_MODE = 4
 LINEFEED_COUNTRY = 71
 LINEFEED_PARTNER = 188
@@ -277,7 +285,7 @@ async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
     """
     payload = await _get(
         f"{BASE_URL}/service-api/LiveFeed/WebGetTopChampsZip",
-        {"lng": LNG, "country": LINEFEED_COUNTRY, "partner": LINEFEED_PARTNER},
+        {"lng": LNG, "country": TOPCHAMPS_COUNTRY, "gr": TOPCHAMPS_GR},
     )
     if not payload.get("Success"):
         raise RuntimeError(f"WebGetTopChampsZip devolvió Success=false: {payload.get('Error')!r}")

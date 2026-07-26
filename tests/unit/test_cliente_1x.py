@@ -342,6 +342,8 @@ def test_obtener_ligas_con_cuotas_value_vacio_devuelve_lista_vacia():
 
 
 def test_obtener_ligas_con_cuotas_pide_los_parametros_de_operador_correctos():
+    """WebGetTopChampsZip usa country=94/gr=413 — DISTINTOS de los de
+    Get1x2_VZip (71/188). No son intercambiables (ESPECIFICACION_FUENTE §0)."""
     respuesta = {"Success": True, "Value": []}
 
     with patch.object(cliente_1x, "_get", return_value=respuesta) as mock_get:
@@ -349,8 +351,9 @@ def test_obtener_ligas_con_cuotas_pide_los_parametros_de_operador_correctos():
 
     url, params = mock_get.call_args[0]
     assert "WebGetTopChampsZip" in url
-    assert params["country"] == 71
-    assert params["partner"] == 188
+    assert params["country"] == 94
+    assert params["gr"] == 413
+    assert "partner" not in params
 
 
 # --- obtener_cuotas (mockeado a nivel de _get, ningún test toca la red) ----
