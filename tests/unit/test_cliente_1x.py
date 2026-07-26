@@ -266,6 +266,28 @@ def test_get_backoff_base_es_3s():
     assert cliente_1x.BACKOFF_BASE_S == 3.0
 
 
+def test_get_provider_busy_no_duplica_el_sleep(monkeypatch):
+    """El `continue` del camino busy tiene que saltar el sleep final del
+    loop — un solo sleep por intento fallido, no dos."""
+    monkeypatch.setattr(cliente_1x, "BACKOFF_BASE_S", 0.001)
+    llamadas_sleep = []
+
+    async def fake_sleep(segundos):
+        llamadas_sleep.append(segundos)
+
+    monkeypatch.setattr(cliente_1x.asyncio, "sleep", fake_sleep)
+
+    respuestas = [
+        (200, {"error": "provider_request_busy"}),
+        (200, {"ok": True}),
+    ]
+    with patch.object(httpx.AsyncClient, "get", _fake_get_secuencia(respuestas, [])):
+        resultado = asyncio.run(cliente_1x._get("http://example.test/x", {}))
+
+    assert resultado == {"ok": True}
+    assert len(llamadas_sleep) == 1
+
+
 # --- obtener_ligas_con_cuotas (paso 1 del flujo de dos pasos) --------------
 
 
