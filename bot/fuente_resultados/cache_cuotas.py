@@ -62,22 +62,76 @@ async def refrescar(sport_id: int, count: int, ahora_ts: int) -> None:
     tiene sentido golpear a provider con N pedidos en paralelo justo
     después de haber visto que Cloudflare corta pedidos grandes con 502.
 
-    Todo o nada: si CUALQUIER paso falla — listar ligas o traer la cuota de
-    UNA sola liga — se aborta el refresco entero y el snapshot anterior se
-    conserva tal cual (mismo contrato de antes, extendido). Las cuotas que
-    ya tenía siguen envejeciendo y venciendo por su propio `capturada_ts`
-    (§6). Nunca se sirve nada como si fuera fresco por culpa de un refresco
-    fallido, ni se arma un snapshot a medias con algunas ligas actualizadas
-    y otras no.
+    ⚠️ Contrato revisado (§7): todo-o-nada en el PASO 1, mejor esfuerzo en
+    el PASO 2.
+      - Paso 1 (listar ligas): si falla, se aborta el refresco entero y se
+        conserva el snapshot anterior — sin la lista de ligas no hay nada
+        que hacer.
+      - Paso 2 (cuotas por liga): una liga individual que falla (puede
+        haber pasado a en vivo entre el paso 1 y el paso 2, o no tener feed
+        prepartido en este momento) se SALTA y se loguea — no aborta el
+        refresco de las demás ligas.
+      - Si TODAS las ligas del paso 2 fallan, no se reemplaza el snapshot
+        por uno vacío: se conserva el anterior. Un snapshot vacío dejaría
+        al bot sin cuotas cuando el problema puede ser transitorio de una
+        corrida.
+
+    ⚠️ El PASO 1 devolviendo CERO ligas (sin excepción, la llamada fue
+    exitosa) se trata IGUAL que "todas las ligas fallaron": se conserva el
+    snapshot anterior, no se reemplaza por uno vacío. No hay forma de
+    distinguir desde `Value: []` si de verdad no hay fútbol prepartido
+    ahora mismo o si es un hueco momentáneo del listado (provider entre
+    actualizaciones) — y vaciar el snapshot activamente rechazaría TODA
+    apuesta de inmediato (`obtener_cuota_fresca` → `None` para todo),
+    incluso cuotas que a los 5 minutos seguían siendo válidas. El TTL (§6)
+    ya cubre el caso genuino: si de verdad no hay ligas, las cuotas viejas
+    vencen solas por su `capturada_ts` en 90s. Vaciar solo sería correcto
+    si se supiera que las cuotas viejas ya no valen, y desde `Value: []` no
+    se sabe eso.
+
+    Las cuotas que ya tenía el snapshot anterior siguen envejeciendo y
+    venciendo por su propio `capturada_ts` (§6) mientras no se reemplaza.
+    Nunca se sirve nada como si fuera fresco por culpa de un refresco
+    fallido o parcial.
     """
     global _snapshot
     try:
         ligas = await cliente_1x.obtener_ligas_con_cuotas(sport_id)
-        eventos: list[cliente_1x.EventoCuotas] = []
-        for liga in ligas:
-            eventos.extend(await cliente_1x.obtener_cuotas(sport_id, liga.champ_id, count))
     except Exception:
-        _logger.warning("refrescar(sport_id=%s) falló, se conserva el snapshot anterior", sport_id, exc_info=True)
+        _logger.warning(
+            "refrescar(sport_id=%s): falló listar ligas (paso 1), se conserva el snapshot anterior",
+            sport_id,
+            exc_info=True,
+        )
+        return
+
+    eventos: list[cliente_1x.EventoCuotas] = []
+    ligas_ok = 0
+    ligas_fallidas = 0
+    for liga in ligas:
+        try:
+            eventos.extend(await cliente_1x.obtener_cuotas(sport_id, liga.champ_id, count))
+            ligas_ok += 1
+        except Exception:
+            ligas_fallidas += 1
+            _logger.warning(
+                "refrescar(sport_id=%s): liga %s falló en el paso 2, se salta", sport_id, liga.champ_id, exc_info=True
+            )
+            continue
+
+    if ligas_ok == 0:
+        if ligas:
+            _logger.warning(
+                "refrescar(sport_id=%s): las %d ligas fallaron, se conserva el snapshot anterior",
+                sport_id,
+                ligas_fallidas,
+            )
+        else:
+            _logger.warning(
+                "refrescar(sport_id=%s): el paso 1 devolvió 0 ligas, se conserva el snapshot anterior "
+                "(el TTL resuelve el caso genuino)",
+                sport_id,
+            )
         return
 
     por_clave: dict[ClaveMercado, CuotaVigente] = {}
