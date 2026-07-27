@@ -41,15 +41,15 @@ BACKOFF_BASE_S = 3.0
 
 PROVIDER_REQUEST_BUSY = "provider_request_busy"
 
-# ⚠️ Los dos endpoints de LiveFeed/LineFeed usan parámetros de operador
-# DISTINTOS contra provider.betfantasy.bet (ESPECIFICACION_FUENTE §0) — no
-# son intercambiables, verificado desde Railway y desde Safari:
-#   WebGetTopChampsZip (paso 1, listado de ligas): country=94, gr=413
-#   Get1x2_VZip (paso 2, cuotas por liga): country=71, partner=188, sin gr
+# ⚠️ Los dos endpoints de LineFeed usan parámetros de operador DISTINTOS
+# contra provider.betfantasy.bet (ESPECIFICACION_FUENTE §0) — no son
+# intercambiables:
+#   GetChampsZip (paso 1, ligas PREPARTIDO): country=71, partner=152
+#   Get1x2_VZip (paso 2, cuotas por liga): country=71, partner=188
 
-# Parámetros fijos de LiveFeed/WebGetTopChampsZip.
-TOPCHAMPS_COUNTRY = 94
-TOPCHAMPS_GR = 413
+# Parámetros fijos de LineFeed/GetChampsZip.
+GETCHAMPSZIP_COUNTRY = 71
+GETCHAMPSZIP_PARTNER = 152
 
 # Parámetros fijos de LineFeed/Get1x2_VZip. Sin `cfview`: la app no lo manda.
 LINEFEED_MODE = 4
@@ -267,16 +267,24 @@ async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
     un deporte entero de una — a diferencia de 1x. Esta función da el set
     de ligas por las que iterar en el paso 2 (`obtener_cuotas`).
 
-    Devuelve un set reducido ("top" leagues, verificado): ya viene sin
-    ligas sintéticas, así que sirve como whitelist natural — a diferencia
-    de `v2/champs`, que sí mezcla simuladas (ESPECIFICACION_FUENTE §10), acá
-    no hace falta una lista manual.
+    ⚠️ Lista desde `LineFeed/GetChampsZip` (árbol PREPARTIDO), no desde
+    `LiveFeed/WebGetTopChampsZip` (árbol EN VIVO). Ese fue el bug real
+    detrás de los 502 intermitentes: `WebGetTopChampsZip` devuelve las top
+    ligas del momento, mezclando ligas en vivo con prepartido. Pedirle a
+    `Get1x2_VZip` (prepartido) una liga que está en vivo da 502 porque esa
+    liga no existe en el árbol prepartido — no era inestabilidad de
+    provider.
+
+    Devuelve una lista PLANA (`groupChamps=true` no anida en esta
+    respuesta) con ligas reales Y sintéticas mezcladas (IPBL, eSports
+    Battle, NBA 2K26, etc.) — la whitelist de `champ_id` para excluir
+    sintéticas queda pendiente (ESPECIFICACION_FUENTE §10), no bloquea
+    este arreglo.
 
     ⚠️ El filtro por `sport_id` es del lado del cliente, sobre el campo
-    `SI` de cada item (verificado contra el JSON real: `SI=1` trae
-    `SN="Fútbol"`) — mismo campo que usa el esquema `_VZip` de
-    `Get1x2_VZip` (ESPECIFICACION_FUENTE §7). No hay un parámetro de query
-    verificado para pedir un solo deporte a este endpoint en particular.
+    `SI` de cada item — se mantiene como defensa en profundidad aunque la
+    query ya manda `sport=sport_id`: no hay que confiar ciegamente en que
+    el servidor respeta el filtro (mismo criterio que el resto del módulo).
 
     ⚠️ provider es intermitente: puede devolver items parciales sin `LI`.
     Un item así se descarta y se loguea, no revienta el refresco de las
@@ -284,11 +292,17 @@ async def obtener_ligas_con_cuotas(sport_id: int) -> list[LigaConCuotas]:
     de resultados, ESPECIFICACION_FUENTE §3.2).
     """
     payload = await _get(
-        f"{BASE_URL}/service-api/LiveFeed/WebGetTopChampsZip",
-        {"lng": LNG, "country": TOPCHAMPS_COUNTRY, "gr": TOPCHAMPS_GR},
+        f"{BASE_URL}/service-api/LineFeed/GetChampsZip",
+        {
+            "sport": sport_id,
+            "lng": LNG,
+            "country": GETCHAMPSZIP_COUNTRY,
+            "partner": GETCHAMPSZIP_PARTNER,
+            "groupChamps": True,
+        },
     )
     if not payload.get("Success"):
-        raise RuntimeError(f"WebGetTopChampsZip devolvió Success=false: {payload.get('Error')!r}")
+        raise RuntimeError(f"GetChampsZip devolvió Success=false: {payload.get('Error')!r}")
 
     ligas = []
     for item in payload.get("Value", []):
