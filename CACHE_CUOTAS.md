@@ -136,6 +136,35 @@ async def refrescar(sport_id: int, count: int, ahora_ts: int) -> None:
     No se sirve nada como si fuera fresco."""
 ```
 
+⚠️ **Contrato revisado: todo-o-nada en el PASO 1 (listar ligas), mejor
+esfuerzo en el PASO 2 (cuotas por liga)** — provider exige `champs=<liga>`
+en `Get1x2_VZip` (ESPECIFICACION_FUENTE §0), así que el refresco de un
+deporte es en realidad: listar ligas prepartido, y después una llamada por
+liga.
+
+- **Paso 1 falla** (listar ligas): se aborta el refresco entero, se
+  conserva el snapshot anterior. Sin la lista de ligas no hay nada que
+  hacer.
+- **Una liga del paso 2 falla**: se SALTA esa liga (puede haber pasado a
+  en vivo entre el paso 1 y el paso 2, o no tener feed prepartido en este
+  momento) y se sigue con las demás. No aborta el refresco completo por
+  una sola liga caída — antes sí lo hacía, y una liga floja arrastraba a
+  todas las demás sin necesidad.
+- **TODAS las ligas del paso 2 fallan**: no se reemplaza el snapshot por
+  uno vacío, se conserva el anterior. Un snapshot vacío dejaría al bot sin
+  cuotas cuando el problema puede ser transitorio de esa corrida.
+
+⚠️ **El paso 1 devolviendo CERO ligas (sin excepción) se trata IGUAL que
+"todas fallan": se conserva el snapshot anterior.** No hay forma de
+distinguir desde `Value: []` si de verdad no hay fútbol prepartido ahora
+mismo o si es un hueco momentáneo del listado (provider entre
+actualizaciones) — y vaciar el snapshot activamente rechazaría toda
+apuesta de inmediato, incluso cuotas que a los 5 minutos seguían siendo
+válidas. El TTL (§6) ya cubre el caso genuino: si de verdad no hay ligas,
+las cuotas viejas vencen solas por su `capturada_ts` en 90s. Vaciar solo
+sería correcto si se supiera que las cuotas viejas ya no valen, y desde
+`Value: []` no se sabe eso.
+
 Quién lo dispara: un job de APScheduler cada 45s (`INTERVALO_REFRESCO_S`,
 menos que el TTL de 90s, para que casi siempre haya snapshot fresco). Esto
 vive en la capa de orquestación (`__main__` / scheduler), no dentro de este

@@ -187,23 +187,67 @@ def test_refrescar_si_falla_listar_ligas_conserva_snapshot():
     assert cuota.capturada_ts == 1000  # no se tocó: el snapshot viejo sigue entero
 
 
-def test_refrescar_si_falla_una_sola_liga_aborta_todo_sin_snapshot_parcial():
-    """Todo o nada: dos ligas, la segunda falla. No debe quedar un snapshot
-    a medias con solo la primera liga actualizada — se conserva el
-    snapshot anterior completo, igual que si hubiera fallado la primera."""
+def test_refrescar_si_falla_una_liga_entre_varias_salta_y_sigue_con_las_demas():
+    """Mejor esfuerzo en el paso 2 (CACHE_CUOTAS §7): una liga puede haber
+    pasado a en vivo entre el paso 1 y el paso 2, o no tener feed
+    prepartido en este momento. Se salta esa liga y se sigue con las
+    demás — no se aborta el refresco entero por una sola liga caída."""
+    evento_a = _evento(game_id=1, champ_id=100, mercados=[_mercado(1, 1500)])
+    evento_c = _evento(game_id=3, champ_id=300, mercados=[_mercado(1, 1700)])
+    ligas = [LigaConCuotas(champ_id=100), LigaConCuotas(champ_id=200), LigaConCuotas(champ_id=300)]
+
+    with patch.object(cache_cuotas.cliente_1x, "obtener_ligas_con_cuotas", return_value=ligas), patch.object(
+        cache_cuotas.cliente_1x,
+        "obtener_cuotas",
+        side_effect=[[evento_a], RuntimeError("liga 200 en vivo, 502"), [evento_c]],
+    ):
+        asyncio.run(cache_cuotas.refrescar(sport_id=1, count=1000, ahora_ts=1000))
+
+    # Las dos ligas buenas (100 y 300) quedaron en el snapshot nuevo.
+    assert cache_cuotas.obtener_cuota_fresca(1, 1, None, ahora_ts=1000) is not None
+    assert cache_cuotas.obtener_cuota_fresca(3, 1, None, ahora_ts=1000) is not None
+
+
+def test_refrescar_si_todas_las_ligas_fallan_conserva_snapshot_anterior():
+    """Guarda de seguridad: si TODAS las ligas del paso 2 fallan, no se
+    reemplaza el snapshot por uno vacío — un snapshot vacío dejaría al bot
+    sin cuotas cuando el problema puede ser transitorio de esta corrida."""
     evento_previo = _evento(game_id=9, champ_id=900, mercados=[_mercado(1, 1111)])
     with patch.object(
         cache_cuotas.cliente_1x, "obtener_ligas_con_cuotas", return_value=[LigaConCuotas(champ_id=900)]
     ), patch.object(cache_cuotas.cliente_1x, "obtener_cuotas", return_value=[evento_previo]):
         asyncio.run(cache_cuotas.refrescar(sport_id=1, count=1000, ahora_ts=1000))
 
-    evento_a = _evento(game_id=1, champ_id=100, mercados=[_mercado(1, 1500)])
     ligas = [LigaConCuotas(champ_id=100), LigaConCuotas(champ_id=200)]
     with patch.object(cache_cuotas.cliente_1x, "obtener_ligas_con_cuotas", return_value=ligas), patch.object(
-        cache_cuotas.cliente_1x, "obtener_cuotas", side_effect=[[evento_a], RuntimeError("liga 200 caída")]
+        cache_cuotas.cliente_1x,
+        "obtener_cuotas",
+        side_effect=[RuntimeError("liga 100 caída"), RuntimeError("liga 200 caída")],
     ):
         asyncio.run(cache_cuotas.refrescar(sport_id=1, count=1000, ahora_ts=1020))
 
-    # El snapshot sigue siendo el previo (game_id=9): ni rastro de evento_a.
-    assert cache_cuotas.obtener_cuota_fresca(9, 1, None, ahora_ts=1020) is not None
-    assert cache_cuotas.obtener_cuota_fresca(1, 1, None, ahora_ts=1020) is None
+    # El snapshot sigue siendo el previo (game_id=9): ni rastro de las ligas nuevas.
+    cuota = cache_cuotas.obtener_cuota_fresca(9, 1, None, ahora_ts=1020)
+    assert cuota is not None
+    assert cuota.capturada_ts == 1000
+
+
+def test_refrescar_paso_1_devuelve_cero_ligas_conserva_snapshot_anterior():
+    """El paso 1 devolvió una lista vacía SIN excepción — se trata igual
+    que 'todas fallan', se conserva el snapshot anterior. Desde `Value: []`
+    no se puede distinguir "no hay fútbol ahora" de un hueco momentáneo del
+    listado; vaciar activamente rechazaría toda apuesta de inmediato. El
+    TTL (§6) es quien vence las cuotas viejas si de verdad no hay ligas."""
+    evento_previo = _evento(game_id=9, champ_id=900, mercados=[_mercado(1, 1111)])
+    with patch.object(
+        cache_cuotas.cliente_1x, "obtener_ligas_con_cuotas", return_value=[LigaConCuotas(champ_id=900)]
+    ), patch.object(cache_cuotas.cliente_1x, "obtener_cuotas", return_value=[evento_previo]):
+        asyncio.run(cache_cuotas.refrescar(sport_id=1, count=1000, ahora_ts=1000))
+
+    with patch.object(cache_cuotas.cliente_1x, "obtener_ligas_con_cuotas", return_value=[]):
+        asyncio.run(cache_cuotas.refrescar(sport_id=1, count=1000, ahora_ts=1020))
+
+    # El snapshot sigue siendo el previo: la cuota original sigue ahí.
+    cuota = cache_cuotas.obtener_cuota_fresca(9, 1, None, ahora_ts=1020)
+    assert cuota is not None
+    assert cuota.capturada_ts == 1000
