@@ -40,6 +40,45 @@ from bot.fuente_resultados.primaria import cliente_1x
 _logger = logging.getLogger(__name__)
 
 
+_DIAGNOSTICO_URL = (  # === DIAGNOSTICO TEMPORAL - QUITAR ===
+    "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
+    "?sports=1&champs=118587&count=40&lng=es&mode=4&country=71&partner=188"
+    "&getEmpty=true&virtualSports=true&countryFirst=true"
+)
+
+
+async def _diagnostico_temporal() -> None:  # === DIAGNOSTICO TEMPORAL - QUITAR ===
+    """HTTP/1.1 vs HTTP/2 contra el MISMO Get1x2_VZip que da 502 en producción.
+    Temporal: se revierte apenas se lean los logs de Railway."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as c:
+            r = await c.get(_DIAGNOSTICO_URL)
+            _logger.warning(
+                "DIAGNOSTICO http1.1: status=%s http_version=%s cache=%s body[:120]=%r",
+                r.status_code,
+                r.http_version,
+                r.headers.get("x-provider-cache"),
+                r.text[:120],
+            )
+    except Exception:
+        _logger.warning("DIAGNOSTICO http1.1: excepción", exc_info=True)
+
+    try:
+        async with httpx.AsyncClient(http2=True, timeout=20.0) as c:
+            r = await c.get(_DIAGNOSTICO_URL)
+            _logger.warning(
+                "DIAGNOSTICO http2: status=%s http_version=%s cache=%s body[:120]=%r",
+                r.status_code,
+                r.http_version,
+                r.headers.get("x-provider-cache"),
+                r.text[:120],
+            )
+    except Exception:
+        _logger.warning("DIAGNOSTICO http2: excepción", exc_info=True)
+
+
 @dataclass(frozen=True)
 class Config:
     db_path: str
@@ -143,6 +182,11 @@ async def main_async(config: Config, detener: asyncio.Event | None = None) -> No
     conn_arranque = _abrir_conexion(config.db_path)
     aplicar_migraciones(conn_arranque)
     conn_arranque.close()
+
+    try:  # === DIAGNOSTICO TEMPORAL - QUITAR ===
+        await _diagnostico_temporal()
+    except Exception:
+        _logger.warning("DIAGNOSTICO: fallo inesperado al correr el diagnóstico", exc_info=True)
 
     scheduler = construir_scheduler(config)
     scheduler.start()
