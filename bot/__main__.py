@@ -42,14 +42,16 @@ _logger = logging.getLogger(__name__)
 
 _DIAGNOSTICO_URL = (  # === DIAGNOSTICO TEMPORAL - QUITAR ===
     "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
-    "?sports=1&champs=118587&count=40&lng=es&mode=4&country=71&partner=188"
+    "?sports=1&champs=1413697&count=50&lng=es&mode=4&country=71&partner=188"
     "&getEmpty=true&virtualSports=true&countryFirst=true"
 )
 
 
 async def _diagnostico_temporal() -> None:  # === DIAGNOSTICO TEMPORAL - QUITAR ===
-    """HTTP/1.1 vs HTTP/2 contra el MISMO Get1x2_VZip que da 502 en producción.
-    Temporal: se revierte apenas se lean los logs de Railway."""
+    """HTTP/1.1 vs HTTP/2 contra una liga en cache MISS (1413697, la que dio
+    502 en el refresco real) — la vuelta anterior probó una liga HIT (118587)
+    y dio 200 en ambos protocolos. Temporal: se revierte apenas se lean los
+    logs de Railway."""
     import httpx
 
     try:
