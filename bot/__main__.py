@@ -40,80 +40,74 @@ from bot.fuente_resultados.primaria import cliente_1x
 _logger = logging.getLogger(__name__)
 
 
-_URL_RAFAGA = (  # === DIAGNOSTICO TEMPORAL - QUITAR ===
-    "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
-    "?sports=1&champs=1413697&count=50&lng=es&mode=4&country=71&partner=188"
-    "&virtualSports=true&getEmpty=true&countryFirst=true"
-)
-_URL_ORDEN_GETEMPTY_PRIMERO = (
-    "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
-    "?sports=1&champs=1146817&count=50&lng=es&mode=4&country=71&partner=188"
-    "&getEmpty=true&virtualSports=true&countryFirst=true"
-)
-_URL_ORDEN_VIRTUALSPORTS_PRIMERO = (
-    "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
-    "?sports=1&champs=1146817&count=50&lng=es&mode=4&country=71&partner=188"
-    "&virtualSports=true&getEmpty=true&countryFirst=true"
-)
+_CHAMPS_CONTROL = (118587, 1413697, 1146817)  # === DIAGNOSTICO TEMPORAL - QUITAR ===
 
 
-async def _diagnostico_temporal() -> None:  # === DIAGNOSTICO TEMPORAL - QUITAR ===
-    """Aísla dos hipótesis del 0% de éxito visto en el refresco real (55
-    ligas, 842/842 en 502) contra el 200 de un diagnóstico aislado:
-    A) orden de query params (getEmpty/virtualSports invertidos respecto del
-       cliente real);
-    B) rate-limiting por ráfaga (el refresco martilla ~55 ligas seguidas con
-       reintentos) — y si el límite es por conexión (keep-alive) o por
-       IP/volumen (conexión nueva también falla).
+def _url_get1x2(champ_id: int) -> str:
+    # mismo orden de params que el cliente real (virtualSports antes de
+    # getEmpty, cliente_1x.py:348-350) — ya descartado como variable en el PR #33
+    return (
+        "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
+        f"?sports=1&champs={champ_id}&count=50&lng=es&mode=4&country=71&partner=188"
+        "&virtualSports=true&getEmpty=true&countryFirst=true"
+    )
+
+
+async def _diagnostico_temporal() -> None:
+    """Diagnóstico de control: distingue "provider caído" de "estas ligas/IDs
+    puntuales no sirven", y verifica si los champ_id (LI) que devuelve el
+    paso 1 real (GetChampsZip) son válidos contra Get1x2_VZip (paso 2) — un
+    problema de mapeo de IDs entre endpoints, no de provider caído.
     Temporal: se revierte apenas se lean los logs de Railway."""
     import httpx
 
-    # B) ráfaga con keep-alive: 25 pedidos seguidos, mismo AsyncClient
+    # 1-3: control con champs conocidos (118587 dio 200 en PR #31; las otras
+    # dos, 502 en producción)
     async with httpx.AsyncClient(timeout=20.0) as c:
-        for i in range(25):
+        for champ_id in _CHAMPS_CONTROL:
             try:
-                r = await c.get(_URL_RAFAGA)
+                r = await c.get(_url_get1x2(champ_id))
                 _logger.warning(
-                    "DIAGNOSTICO rafaga_keepalive #%d: status=%s body[:120]=%r",
-                    i + 1,
+                    "DIAGNOSTICO control champs=%s: status=%s body[:120]=%r",
+                    champ_id,
                     r.status_code,
                     r.text[:120],
                 )
             except Exception:
-                _logger.warning("DIAGNOSTICO rafaga_keepalive #%d: excepción", i + 1, exc_info=True)
-            await asyncio.sleep(1)
+                _logger.warning("DIAGNOSTICO control champs=%s: excepción", champ_id, exc_info=True)
 
-    # B) ráfaga con conexión nueva cada vez: 25 pedidos, un AsyncClient por petición
-    for i in range(25):
+    # 4: paso 1 real (GetChampsZip), primeros 5 champ_id (LI), y si 118587
+    # (válido en paso 2) está en la lista que devuelve el paso 1
+    primeros: list[int] = []
+    try:
+        ligas = await cliente_1x.obtener_ligas_con_cuotas(1)
+        todos_los_li = [liga.champ_id for liga in ligas]
+        primeros = todos_los_li[:5]
+        _logger.warning(
+            "DIAGNOSTICO paso1_real: primeros 5 champ_id=%s (de %d ligas totales)", primeros, len(todos_los_li)
+        )
+        _logger.warning(
+            "DIAGNOSTICO 118587_en_paso1: %s (total=%d)", 118587 in todos_los_li, len(todos_los_li)
+        )
+    except Exception:
+        _logger.warning("DIAGNOSTICO paso1_real: excepción", exc_info=True)
+
+    # 5: el PRIMER champ_id del paso 1 real, probado inmediatamente contra Get1x2_VZip
+    if primeros:
+        champ_id = primeros[0]
         try:
             async with httpx.AsyncClient(timeout=20.0) as c:
-                r = await c.get(_URL_RAFAGA)
+                r = await c.get(_url_get1x2(champ_id))
                 _logger.warning(
-                    "DIAGNOSTICO rafaga_conexion_nueva #%d: status=%s body[:120]=%r",
-                    i + 1,
+                    "DIAGNOSTICO paso2_con_champ_de_paso1 champs=%s: status=%s body[:120]=%r",
+                    champ_id,
                     r.status_code,
                     r.text[:120],
                 )
         except Exception:
-            _logger.warning("DIAGNOSTICO rafaga_conexion_nueva #%d: excepción", i + 1, exc_info=True)
-        await asyncio.sleep(1)
-
-    # A) orden de params, misma liga (1146817, falla en producción), dos variantes
-    async with httpx.AsyncClient(timeout=20.0) as c:
-        for nombre, url in (
-            ("getEmpty_primero", _URL_ORDEN_GETEMPTY_PRIMERO),
-            ("virtualSports_primero", _URL_ORDEN_VIRTUALSPORTS_PRIMERO),
-        ):
-            try:
-                r = await c.get(url)
-                _logger.warning(
-                    "DIAGNOSTICO orden(%s): status=%s body[:120]=%r",
-                    nombre,
-                    r.status_code,
-                    r.text[:120],
-                )
-            except Exception:
-                _logger.warning("DIAGNOSTICO orden(%s): excepción", nombre, exc_info=True)
+            _logger.warning(
+                "DIAGNOSTICO paso2_con_champ_de_paso1 champs=%s: excepción", champ_id, exc_info=True
+            )
 
 
 @dataclass(frozen=True)
