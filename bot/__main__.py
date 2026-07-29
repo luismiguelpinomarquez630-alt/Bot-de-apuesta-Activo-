@@ -40,45 +40,80 @@ from bot.fuente_resultados.primaria import cliente_1x
 _logger = logging.getLogger(__name__)
 
 
-_DIAGNOSTICO_URL = (  # === DIAGNOSTICO TEMPORAL - QUITAR ===
+_URL_RAFAGA = (  # === DIAGNOSTICO TEMPORAL - QUITAR ===
     "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
     "?sports=1&champs=1413697&count=50&lng=es&mode=4&country=71&partner=188"
+    "&virtualSports=true&getEmpty=true&countryFirst=true"
+)
+_URL_ORDEN_GETEMPTY_PRIMERO = (
+    "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
+    "?sports=1&champs=1146817&count=50&lng=es&mode=4&country=71&partner=188"
     "&getEmpty=true&virtualSports=true&countryFirst=true"
+)
+_URL_ORDEN_VIRTUALSPORTS_PRIMERO = (
+    "https://provider.betfantasy.bet/service-api/LineFeed/Get1x2_VZip"
+    "?sports=1&champs=1146817&count=50&lng=es&mode=4&country=71&partner=188"
+    "&virtualSports=true&getEmpty=true&countryFirst=true"
 )
 
 
 async def _diagnostico_temporal() -> None:  # === DIAGNOSTICO TEMPORAL - QUITAR ===
-    """HTTP/1.1 vs HTTP/2 contra una liga en cache MISS (1413697, la que dio
-    502 en el refresco real) — la vuelta anterior probó una liga HIT (118587)
-    y dio 200 en ambos protocolos. Temporal: se revierte apenas se lean los
-    logs de Railway."""
+    """Aísla dos hipótesis del 0% de éxito visto en el refresco real (55
+    ligas, 842/842 en 502) contra el 200 de un diagnóstico aislado:
+    A) orden de query params (getEmpty/virtualSports invertidos respecto del
+       cliente real);
+    B) rate-limiting por ráfaga (el refresco martilla ~55 ligas seguidas con
+       reintentos) — y si el límite es por conexión (keep-alive) o por
+       IP/volumen (conexión nueva también falla).
+    Temporal: se revierte apenas se lean los logs de Railway."""
     import httpx
 
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as c:
-            r = await c.get(_DIAGNOSTICO_URL)
-            _logger.warning(
-                "DIAGNOSTICO http1.1: status=%s http_version=%s cache=%s body[:120]=%r",
-                r.status_code,
-                r.http_version,
-                r.headers.get("x-provider-cache"),
-                r.text[:120],
-            )
-    except Exception:
-        _logger.warning("DIAGNOSTICO http1.1: excepción", exc_info=True)
+    # B) ráfaga con keep-alive: 25 pedidos seguidos, mismo AsyncClient
+    async with httpx.AsyncClient(timeout=20.0) as c:
+        for i in range(25):
+            try:
+                r = await c.get(_URL_RAFAGA)
+                _logger.warning(
+                    "DIAGNOSTICO rafaga_keepalive #%d: status=%s body[:120]=%r",
+                    i + 1,
+                    r.status_code,
+                    r.text[:120],
+                )
+            except Exception:
+                _logger.warning("DIAGNOSTICO rafaga_keepalive #%d: excepción", i + 1, exc_info=True)
+            await asyncio.sleep(1)
 
-    try:
-        async with httpx.AsyncClient(http2=True, timeout=20.0) as c:
-            r = await c.get(_DIAGNOSTICO_URL)
-            _logger.warning(
-                "DIAGNOSTICO http2: status=%s http_version=%s cache=%s body[:120]=%r",
-                r.status_code,
-                r.http_version,
-                r.headers.get("x-provider-cache"),
-                r.text[:120],
-            )
-    except Exception:
-        _logger.warning("DIAGNOSTICO http2: excepción", exc_info=True)
+    # B) ráfaga con conexión nueva cada vez: 25 pedidos, un AsyncClient por petición
+    for i in range(25):
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as c:
+                r = await c.get(_URL_RAFAGA)
+                _logger.warning(
+                    "DIAGNOSTICO rafaga_conexion_nueva #%d: status=%s body[:120]=%r",
+                    i + 1,
+                    r.status_code,
+                    r.text[:120],
+                )
+        except Exception:
+            _logger.warning("DIAGNOSTICO rafaga_conexion_nueva #%d: excepción", i + 1, exc_info=True)
+        await asyncio.sleep(1)
+
+    # A) orden de params, misma liga (1146817, falla en producción), dos variantes
+    async with httpx.AsyncClient(timeout=20.0) as c:
+        for nombre, url in (
+            ("getEmpty_primero", _URL_ORDEN_GETEMPTY_PRIMERO),
+            ("virtualSports_primero", _URL_ORDEN_VIRTUALSPORTS_PRIMERO),
+        ):
+            try:
+                r = await c.get(url)
+                _logger.warning(
+                    "DIAGNOSTICO orden(%s): status=%s body[:120]=%r",
+                    nombre,
+                    r.status_code,
+                    r.text[:120],
+                )
+            except Exception:
+                _logger.warning("DIAGNOSTICO orden(%s): excepción", nombre, exc_info=True)
 
 
 @dataclass(frozen=True)
